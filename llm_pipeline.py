@@ -21,7 +21,10 @@ class LLMPipeline:
     def __init__(self, model_name: str = "mistral", use_local: bool = True):
         self.model_name = model_name
         self.use_local = use_local
-        self.ollama_base_url = "http://localhost:11434/api"
+        # Get Ollama host from environment variable or default to host.docker.internal
+        ollama_host = os.getenv('OLLAMA_HOST', 'host.docker.internal')
+        self.ollama_base_url = f"http://{ollama_host}:11434/api"
+        print(self.ollama_base_url)
         
         # Create responses directory
         self.responses_dir = "llm_responses"

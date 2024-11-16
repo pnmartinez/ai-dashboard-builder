@@ -23,9 +23,11 @@ RUN mkdir -p /app/llm_responses /app/cache
 
 # Expose port
 EXPOSE 8050
+EXPOSE 11434
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV OLLAMA_HOST=0.0.0.0
 
 # Run the application
 CMD ["python", "app.py"] 

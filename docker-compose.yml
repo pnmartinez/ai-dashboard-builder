@@ -10,21 +10,12 @@ services:
       - ./cache:/app/cache
     environment:
       - LLM_API_KEY=${LLM_API_KEY}
-    networks:
-      - app_network
-  
-  ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - app_network
-
-volumes:
-  ollama_data:
+      - OLLAMA_HOST=0.0.0.0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    network_mode: "host"
+    command: python app.py
 
 networks:
-  app_network:
-    driver: bridge 
+  default:
+    driver: bridge
