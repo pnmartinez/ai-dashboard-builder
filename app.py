@@ -56,7 +56,7 @@ app.layout = html.Div([
     
     # Main container
     dbc.Container(fluid=True, children=[
-        html.H1('Data Analysis Dashboard Builder', 
+        html.H1('AI Dashboard Builder', 
             style={
                 'textAlign': 'center', 
                 'color': COLORS['primary'], 
@@ -314,7 +314,7 @@ def analyze_data(set_progress, n_clicks, json_data, provider, api_key, model):
                                         dbc.Tab(label="Chart", tab_id=f"chart-tab-{i}"),
                                         dbc.Tab(label="Code", tab_id=f"code-tab-{i}")
                                     ],
-                                    id=f'tabs-{i}',
+                                    id={'type': 'tabs', 'index': i},
                                     active_tab=f"chart-tab-{i}"),
                                 ),
                                 dbc.CardBody([
@@ -327,7 +327,7 @@ def analyze_data(set_progress, n_clicks, json_data, provider, api_key, model):
                                                 figure=fig,
                                                 config={'displayModeBar': False}
                                             ),
-                                            id=f'chart-content-{i}',
+                                            id={'type': 'chart-content', 'index': i},
                                             style={'display': 'block'}
                                         ),
                                         # Code tab content
@@ -344,13 +344,13 @@ def analyze_data(set_progress, n_clicks, json_data, provider, api_key, model):
                                             ),
                                             dbc.Button(
                                                 "Copy Code",
-                                                id=f'copy-btn-{i}',
+                                                id={'type': 'copy-btn', 'index': i},
                                                 color="primary",
                                                 size="sm",
                                                 className="mt-2"
                                             )
                                         ],
-                                        id=f'code-content-{i}',
+                                        id={'type': 'code-content', 'index': i},
                                         style={'display': 'none'}
                                         )
                                     ])
@@ -414,7 +414,7 @@ def analyze_data(set_progress, n_clicks, json_data, provider, api_key, model):
     prevent_initial_call=True
 )
 def switch_tab(active_tab):
-    if 'chart-tab' in active_tab:
+    if active_tab and 'chart-tab' in active_tab:
         return {'display': 'block'}, {'display': 'none'}
     return {'display': 'none'}, {'display': 'block'}
 
