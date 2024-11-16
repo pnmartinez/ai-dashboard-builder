@@ -12,3 +12,4 @@ This is currently structured as a simple Plotly app that dinanmically builds a d
 - better layout for mobile and desktop,
 - correct bug in seeing the underlying code of each plot,
 - possibility to export dashboard config as a ready to deploy bundle.
+- dockerization helpers.
