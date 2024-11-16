@@ -77,7 +77,7 @@ app.layout = html.Div([
                             dbc.RadioItems(
                                 id='llm-provider',
                                 options=[
-                                    {'label': 'Local (Ollama)', 'value': 'local'},
+                                    {'label': html.A('Local (Ollama)', href='https://ollama.com/download', target='_blank'), 'value': 'local'},
                                     {'label': 'External API', 'value': 'external'}
                                 ],
                                 value='local',
@@ -284,20 +284,20 @@ def analyze_data(set_progress, n_clicks, json_data, provider, api_key, model):
             pipeline = LLMPipeline(model_name=model, use_local=False)
         
         # Rest of the analysis process remains the same
-        set_progress(html.Div("Analyzing dataset...", style={'color': COLORS['info']}))
+        set_progress(html.Div("1/5 Analyzing dataset...", style={'color': COLORS['info']}))
         analysis = pipeline.analyze_dataset(df)
         
-        set_progress(html.Div("Generating visualization suggestions...", style={'color': COLORS['info']}))
+        set_progress(html.Div("2/5 Generating visualization suggestions...", style={'color': COLORS['info']}))
         viz_specs = pipeline.suggest_visualizations(df)
         
-        set_progress(html.Div("Creating visualizations...", style={'color': COLORS['info']}))
+        set_progress(html.Div("3/5 Creating visualizations...", style={'color': COLORS['info']}))
         dashboard_builder = DashboardBuilder(df, COLORS)
         figures = dashboard_builder.create_all_figures(viz_specs)
         
-        set_progress(html.Div("Generating insights summary...", style={'color': COLORS['info']}))
+        set_progress(html.Div("4/5 Generating insights summary...", style={'color': COLORS['info']}))
         summary = pipeline.summarize_analysis(analysis, viz_specs)
         
-        set_progress(html.Div("Rendering dashboard...", style={'color': COLORS['info']}))
+        set_progress(html.Div("5/5 Rendering dashboard...", style={'color': COLORS['info']}))
         return html.Div([
             # Visualizations Section (First)
             dbc.Card([
