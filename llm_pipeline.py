@@ -22,7 +22,7 @@ class LLMPipeline:
         self.model_name = model_name
         self.use_local = use_local
         # Get Ollama host from environment variable or default to host.docker.internal
-        ollama_host = os.getenv('OLLAMA_HOST', 'host.docker.internal')
+        ollama_host = os.getenv('OLLAMA_HOST', 'localhost') #'host.docker.internal')
         self.ollama_base_url = f"http://{ollama_host}:11434/api"
         print(self.ollama_base_url)
         

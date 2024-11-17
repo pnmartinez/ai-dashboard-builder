@@ -1,29 +1,28 @@
-version: '3.8'
-
 services:
   ollama:
-    image: ollama/ollama:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.ollama
+    image: ollama_custom:latest
     container_name: ollama
     ports:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
-    networks:
-      - ai-dashboard-net
+    environment:
+      - OLLAMA_HOST=0.0.0.0
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434"]
       interval: 10s
       timeout: 5s
       retries: 5
-    command: sh -c "
-      ollama serve &
-      sleep 10 &&
-      ollama pull llama3.1 &&
-      tail -f /dev/null
-      "
+    networks:
+      - ai-dashboard-net
 
   dashboard:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
     ports:
       - "8050:8050"
     volumes:
@@ -37,15 +36,10 @@ services:
         condition: service_healthy
     networks:
       - ai-dashboard-net
-    command: >
-      sh -c "
-        echo 'Waiting for Ollama to be ready and pull model...' &&
-        sleep 30 &&
-        python app.py"
 
 networks:
   ai-dashboard-net:
     driver: bridge
 
 volumes:
-  ollama_data: 
+  ollama_data:
