@@ -40,8 +40,13 @@ class DashboardBuilder:
                 raise ValueError(f"Column '{x}' not found in dataframe")
             if y and y not in self.df.columns:
                 raise ValueError(f"Column '{y}' not found in dataframe")
-            if color and color not in self.df.columns:
-                raise ValueError(f"Column '{color}' not found in dataframe")
+            
+            # # Only validate color if it's specified and looks like a column name
+            # # (doesn't start with # and isn't a named color)
+            # if (color and color not in self.df.columns and 
+            #     not color.startswith('#') and 
+            #     not color.replace(' ', '').isalpha()):
+            #     raise ValueError(f"Column '{color}' not found in dataframe")
             
             # Create figure based on visualization type
             if viz_type == 'line':
@@ -49,9 +54,10 @@ class DashboardBuilder:
                     self.df,
                     x=x,
                     y=y,
-                    color=color,
+                    color=color if color in self.df.columns else None,
                     title=title,
-                    markers=params.get('markers', True)
+                    markers=params.get('markers', True),
+                    color_discrete_sequence=[color] if color and color not in self.df.columns else None
                 )
                 
             elif viz_type == 'bar':
@@ -59,28 +65,31 @@ class DashboardBuilder:
                     fig = px.histogram(
                         self.df,
                         x=x,
-                        color=color,
+                        color=color if color in self.df.columns else None,
                         title=title,
-                        barmode=params.get('barmode', 'relative')
+                        barmode=params.get('barmode', 'relative'),
+                        color_discrete_sequence=[color] if color and color not in self.df.columns else None
                     )
                 else:
                     fig = px.bar(
                         self.df,
                         x=x,
                         y=y,
-                        color=color,
+                        color=color if color in self.df.columns else None,
                         title=title,
-                        barmode=params.get('barmode', 'relative')
+                        barmode=params.get('barmode', 'relative'),
+                        color_discrete_sequence=[color] if color and color not in self.df.columns else None
                     )
                     
             elif viz_type == 'histogram':
                 fig = px.histogram(
                     self.df,
                     x=x,
-                    color=color,
+                    color=color if color in self.df.columns else None,
                     title=title,
                     nbins=params.get('nbins', 30),
-                    histnorm=params.get('histnorm', None)
+                    histnorm=params.get('histnorm', None),
+                    color_discrete_sequence=[color] if color and color not in self.df.columns else None
                 )
                 
             elif viz_type == 'scatter':
@@ -88,10 +97,11 @@ class DashboardBuilder:
                     self.df,
                     x=x,
                     y=y,
-                    color=color,
+                    color=color if color in self.df.columns else None,
                     title=title,
                     size=params.get('size'),
-                    hover_data=params.get('hover_data', None)
+                    hover_data=params.get('hover_data', None),
+                    color_discrete_sequence=[color] if color and color not in self.df.columns else None
                 )
                 
             elif viz_type == 'heatmap':
@@ -112,9 +122,10 @@ class DashboardBuilder:
                     self.df,
                     x=x,
                     y=y,
-                    color=color,
+                    color=color if color in self.df.columns else None,
                     title=title,
-                    points=params.get('points', 'outliers')
+                    points=params.get('points', 'outliers'),
+                    color_discrete_sequence=[color] if color and color not in self.df.columns else None
                 )
                 
             elif viz_type == 'violin':
@@ -122,10 +133,11 @@ class DashboardBuilder:
                     self.df,
                     x=x,
                     y=y,
-                    color=color,
+                    color=color if color in self.df.columns else None,
                     title=title,
                     box=params.get('box', True),
-                    points=params.get('points', 'outliers')
+                    points=params.get('points', 'outliers'),
+                    color_discrete_sequence=[color] if color and color not in self.df.columns else None
                 )
                 
             elif viz_type == 'pie':
@@ -134,7 +146,8 @@ class DashboardBuilder:
                     names=x,
                     values=y,
                     title=title,
-                    hole=params.get('hole', 0)
+                    hole=params.get('hole', 0),
+                    color_discrete_sequence=[color] if color and color not in self.df.columns else None
                 )
                 
             elif viz_type == 'timeline':
@@ -144,8 +157,9 @@ class DashboardBuilder:
                         x_start='begin',
                         x_end='end',
                         y=y or 'name',
-                        color=color,
-                        title=title
+                        color=color if color in self.df.columns else None,
+                        title=title,
+                        color_discrete_sequence=[color] if color and color not in self.df.columns else None
                     )
                 else:
                     raise ValueError("Timeline requires 'begin' and 'end' columns")
