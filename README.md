@@ -28,13 +28,16 @@ docker compose up --build
 
 ### Option 2: Running with Bundled Ollama
 
-1. Clone the repository as above.
+1. Clone the repository:
+```bash
+git clone https://github.com/pnmartinez/ai-dashboard-builder.git
+```
 
-2. Run using the all-in-one compose file:
+2. Go into the folder and run the app using the all-in-one compose file:
 ```bash
 docker compose -f docker-compose.all-in-one.yml up --build
 ```
 
-The bundled version will automatically pull and set up ollama with the required model.
+The bundled version will automatically pull and set up ollama with the required model (llama3.1). First run could take some minutes to pull the model.
 
 3. For either option, open your browser and navigate to `http://localhost:8050` to see the dashboard.
