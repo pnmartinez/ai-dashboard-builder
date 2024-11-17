@@ -22,7 +22,7 @@ class LLMPipeline:
         self.model_name = model_name
         self.use_local = use_local
         # Get Ollama host from environment variable or default to host.docker.internal
-        ollama_host = os.getenv('OLLAMA_HOST', 'localhost') #'host.docker.internal')
+        ollama_host = os.getenv('OLLAMA_HOST', 'host.docker.internal')
         self.ollama_base_url = f"http://{ollama_host}:11434/api"
         print(self.ollama_base_url)
         
@@ -387,38 +387,107 @@ Example format:
                     
                 logger.info("Received visualization response")
 
-                # Extract JSON from the response
+                # Extract and clean JSON from the response
                 logger.info("Extracting JSON from response")
-                start_idx = response.find('{')
-                end_idx = response.rfind('}') + 1
-                if start_idx == -1 or end_idx == 0:
-                    logger.error("Could not find JSON structure in response")
-                    return {}
+                
+                # Find JSON structure with better error handling
+                def extract_json_str(text: str) -> str:
+                    # Look for JSON structure between triple backticks if present
+                    if "```json" in text:
+                        start = text.find("```json") + 7
+                        end = text.find("```", start)
+                        if start > -1 and end > -1:
+                            return text[start:end].strip()
                     
-                json_str = response[start_idx:end_idx]
-                logger.info("Found JSON structure in response")
+                    # Otherwise look for JSON between curly braces
+                    start_idx = text.find('{')
+                    end_idx = text.rfind('}') + 1
+                    if start_idx >= 0 and end_idx > 0:
+                        return text[start_idx:end_idx]
+                    
+                    raise ValueError("No valid JSON structure found in response")
 
-                # Parse the JSON
-                viz_specs = json.loads(json_str)
-                logger.info(f"Successfully parsed JSON with {len(viz_specs)} visualization specifications")
+                def clean_json_str(json_str: str) -> str:
+                    # Remove any markdown formatting
+                    json_str = json_str.replace('```json', '').replace('```', '')
+                    
+                    # Remove any control characters
+                    json_str = ''.join(char for char in json_str if ord(char) >= 32 or char in '\n\r\t')
+                    
+                    # Fix common JSON formatting issues
+                    json_str = json_str.replace('\n', ' ').replace('\r', ' ')
+                    json_str = json_str.replace('\\n', ' ').replace('\\r', ' ')
+                    json_str = json_str.strip()
+                    
+                    return json_str
+
+                try:
+                    json_str = extract_json_str(response)
+                    json_str = clean_json_str(json_str)
+                    viz_specs = json.loads(json_str)
+                    logger.info(f"Successfully parsed JSON with {len(viz_specs)} visualization specifications")
+                    
+                except json.JSONDecodeError as je:
+                    logger.error(f"JSON parsing error: {str(je)}")
+                    logger.debug(f"Problematic JSON string: {json_str}")
+                    
+                    # Attempt to fix common JSON issues
+                    try:
+                        # Try eval as a last resort (safe for dict literals)
+                        import ast
+                        viz_specs = ast.literal_eval(json_str)
+                        logger.info("Successfully parsed JSON using ast.literal_eval")
+                    except:
+                        logger.error("Failed to parse JSON even with ast.literal_eval")
+                        return {}
+
+                # Validate the visualization specifications
+                if not isinstance(viz_specs, dict):
+                    logger.error("Parsed result is not a dictionary")
+                    return {}
 
                 # Add metadata to each visualization
                 logger.info("Adding metadata to visualization specifications")
+                validated_specs = {}
+                
                 for viz_id, viz_spec in viz_specs.items():
-                    viz_spec['metadata'] = {
-                        'x_meta': column_metadata.get(viz_spec.get('x', ''), {}),
-                        'y_meta': column_metadata.get(viz_spec.get('y', ''), {}),
-                        'color_meta': column_metadata.get(viz_spec.get('color', ''), {})
+                    # Ensure required fields are present
+                    if not all(key in viz_spec for key in ['type', 'title']):
+                        logger.warning(f"Skipping invalid visualization spec {viz_id}: missing required fields")
+                        continue
+                        
+                    # Clean and validate the specification
+                    cleaned_spec = {
+                        'type': str(viz_spec.get('type', '')).lower(),
+                        'x': str(viz_spec.get('x', '')),
+                        'y': str(viz_spec.get('y', '')),
+                        'color': str(viz_spec.get('color', '')),
+                        'title': str(viz_spec.get('title', '')),
+                        'description': str(viz_spec.get('description', '')),
+                        'parameters': viz_spec.get('parameters', {})
                     }
                     
-                    viz_spec['parameters'] = viz_spec.get('parameters', {})
-                    viz_spec['parameters'].update({
+                    # Replace "None" color with default color
+                    if cleaned_spec['color'].lower() in ['none', 'null', '', None]:
+                        cleaned_spec['color'] = '#636EFA'  # Default Plotly blue
+                    
+                    # Add metadata
+                    cleaned_spec['metadata'] = {
+                        'x_meta': column_metadata.get(cleaned_spec['x'], {}),
+                        'y_meta': column_metadata.get(cleaned_spec['y'], {}),
+                        'color_meta': column_metadata.get(cleaned_spec['color'], {})
+                    }
+                    
+                    # Add default parameters
+                    cleaned_spec['parameters'].update({
                         'height': 400,
                         'template': 'plotly',
                         'opacity': 0.8
                     })
+                    
+                    validated_specs[viz_id] = cleaned_spec
 
-                # Save visualization specifications separately
+                # Save visualization specifications
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 viz_specs_file = os.path.join(self.responses_dir, f"viz_specs_{timestamp}.json")
                 try:
@@ -428,21 +497,18 @@ Example format:
                             "model": self.model_name,
                             "provider": "local" if self.use_local else "api",
                             "column_metadata": column_metadata,
-                            "visualization_specs": viz_specs
+                            "visualization_specs": validated_specs
                         }, f, indent=2, ensure_ascii=False)
                     logger.info(f"Saved visualization specifications to {viz_specs_file}")
                 except Exception as e:
                     logger.error(f"Failed to save visualization specifications: {str(e)}", exc_info=True)
 
-                logger.info("Successfully generated all visualization specifications")
-                return viz_specs
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Error parsing JSON response: {str(e)}", exc_info=True)
-                return {}
+                return validated_specs
+
             except Exception as e:
                 logger.error(f"Error in visualization suggestion: {str(e)}", exc_info=True)
                 return {}
+            
         return self._time_execution("suggest_visualizations", _suggest)
 
     def explain_pattern(self, df: pd.DataFrame, pattern_description: str) -> str:
