@@ -5,8 +5,12 @@ FROM python:3.10-slim
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
     build-essential \
+    curl \
+    ca-certificates \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
@@ -23,11 +27,9 @@ RUN mkdir -p /app/llm_responses /app/cache
 
 # Expose port
 EXPOSE 8050
-EXPOSE 11434
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV OLLAMA_HOST=0.0.0.0
 
 # Run the application
 CMD ["python", "app.py"] 

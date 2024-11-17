@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - ai-dashboard-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  dashboard:
+    build: .
+    ports:
+      - "8050:8050"
+    volumes:
+      - ./llm_responses:/app/llm_responses
+      - ./cache:/app/cache
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY}
+      - OLLAMA_HOST=ollama
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - ai-dashboard-net
+    command: >
+      sh -c "
+        echo 'Waiting for Ollama to be ready...' &&
+        sleep 10 &&
+        python app.py"
+
+networks:
+  ai-dashboard-net:
+    driver: bridge
+
+volumes:
+  ollama_data: 
