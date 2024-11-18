@@ -522,21 +522,13 @@ class LLMPipeline:
             logger.warning(f"Error while attempting to sort dataframe: {str(e)}")
             return df
 
-    def analyze_dataset(self, df: pd.DataFrame) -> str:
+    def analyze_dataset(self, df: pd.DataFrame, kpis: Optional[list] = None) -> str:
         """
         Perform comprehensive analysis of the dataset using LLM.
         
-        Generates a structured report including overview, column analysis,
-        key observations, statistical highlights, and recommendations.
-        
         Args:
             df (pd.DataFrame): Dataset to analyze
-            
-        Returns:
-            str: Structured analysis report
-            
-        Raises:
-            Exception: If analysis fails
+            kpis (list, optional): List of KPI columns to focus on
         """
         def _analyze(df: pd.DataFrame):
             logger.info("Starting dataset analysis")
@@ -554,9 +546,25 @@ class LLMPipeline:
                     "unique_counts": {k: self._serialize_for_json(v) for k, v in df.nunique().to_dict().items()}
                 }
                 
-                # Generate and send prompt
+                # Add KPI context to the prompt if provided
+                kpi_context = ""
+                if kpis:
+                    kpi_context = f"""
+🎯 KEY PERFORMANCE INDICATORS
+--------------------------
+The following columns have been identified as key metrics of interest:
+{', '.join(kpis)}
+
+Please pay special attention to these KPIs in your analysis, focusing on:
+• Factors that influence these metrics
+• Relationships between these KPIs and other variables
+• Patterns and trends in these metrics
+• Recommendations for improving or optimizing these KPIs
+"""
+                
                 prompt = f"""Analyze this dataset and provide a detailed report in the following format:
 
+{kpi_context if kpis else ''}
 📊 DATASET OVERVIEW
 ------------------
 • Total Records: {len(df)}
@@ -573,24 +581,28 @@ For each column:
 • Description: [what this column represents]
 • Value Range/Categories: [key values or ranges]
 • Quality Issues: [missing values, anomalies]
+{'• Relationship to KPIs: [describe influence on KPIs]' if kpis else ''}
 
 🔍 KEY OBSERVATIONS
 -----------------
 • [List 3-5 main patterns or insights]
 • [Note any data quality issues]
 • [Highlight interesting relationships]
+{'• [Focus on KPI drivers and correlations]' if kpis else ''}
 
 📈 STATISTICAL HIGHLIGHTS
 -----------------------
 • [Key statistics and distributions]
 • [Notable correlations]
 • [Significant patterns]
+{'• [Statistical analysis of KPI relationships]' if kpis else ''}
 
 💡 RECOMMENDATIONS
 ----------------
 • [Suggest data cleaning steps]
 • [Propose analysis approaches]
 • [Recommend focus areas]
+{'• [Specific recommendations for KPI optimization]' if kpis else ''}
 
 Sample Data Preview:
 {pd.DataFrame(data_summary['sample_rows']).to_string()}
@@ -616,21 +628,13 @@ Please provide a comprehensive analysis following this exact structure, using th
             
         return self._time_execution("analyze_dataset", _analyze, df)
 
-    def suggest_visualizations(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def suggest_visualizations(self, df: pd.DataFrame, kpis: Optional[list] = None) -> Dict[str, Any]:
         """
         Generate visualization suggestions for the dataset using LLM.
         
-        Creates specifications for various types of visualizations based on
-        the data types and relationships in the dataset.
-        
         Args:
             df (pd.DataFrame): Dataset to visualize
-            
-        Returns:
-            Dict[str, Any]: Dictionary of visualization specifications
-            
-        Raises:
-            Exception: If visualization suggestion fails
+            kpis (list, optional): List of KPI columns to focus on
         """
         def _suggest(df: pd.DataFrame):
             logger.info("Starting visualization suggestions process")
@@ -674,7 +678,14 @@ Please provide a comprehensive analysis following this exact structure, using th
     }
 }"""
 
-                prompt = f"""Given the following dataset information, suggest appropriate visualizations for an insightful dashboard in a structured JSON format, without any preceding or trailing text.
+                # Add KPI context to the prompt
+                kpi_context = ""
+                if kpis:
+                    kpi_context = f"""
+
+Additionally, include visualizations for these key metrics of interest: {', '.join(kpis)}, with an emphasis on identifying trends and relationships with other variables in the dataset."""
+                
+                prompt = f"""Given the following dataset information, suggest appropriate visualizations for an insightful dashboard in a structured JSON format. Do not use as X or Y columns with only 1 unique value.
 
 Column Metadata:
 {column_metadata_json}
@@ -690,6 +701,8 @@ Return only a JSON structure intended for Plotly where each key is a visualizati
 5. title: Suggested title for the visualization
 6. description: What insights this visualization provides
 7. parameters: Additional parameters for the chart (e.g., orientation, aggregation)
+
+{kpi_context if kpis else ''}
 
 Example response format:
 ```json{example_format}```"""

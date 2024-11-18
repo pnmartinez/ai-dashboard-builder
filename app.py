@@ -26,6 +26,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 import dash_dangerously_set_inner_html
 import markdown2
+import plotly.graph_objects as go
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -99,6 +100,7 @@ app.layout = html.Div([
     dcc.Store(id='data-store', storage_type='memory'),
     dcc.Store(id='viz-state', storage_type='memory'),
     dcc.Store(id='dashboard-rendered', storage_type='memory'),
+    dcc.Store(id='filter-state', storage_type='memory'),  # For storing filter state
     
     # Main container
     dbc.Container(fluid=True, children=[
@@ -109,11 +111,11 @@ app.layout = html.Div([
                     'color': COLORS['primary'],
                     'marginBottom': '2rem',
                     'paddingTop': '1rem',
-                    'textDecoration': 'none'  # Remove underline from link
+                    'textDecoration': 'none'
                 }
             ),
-            href='/',  # Link to homepage
-            style={'textDecoration': 'none'}  # Remove underline from link container
+            href='/',
+            style={'textDecoration': 'none'}
         ),
         
         # Controls Row - Horizontal bar at the top
@@ -195,28 +197,52 @@ app.layout = html.Div([
                             className='w-100 mt-2',
                             disabled=True
                         ),
+                        dcc.Dropdown(
+                            id='kpi-selector',
+                            multi=True,
+                            placeholder="Select KPIs of interest...",
+                            className="mt-2",
+                            style={'width': '100%'}
+                        ),
                         dbc.Checkbox(
                             id='viz-only-checkbox',
                             label="Visualizations only (faster process)",
                             value=True,
                             className="mt-2",
-                            style={'color': '#6c757d'}  # Using a muted secondary text color
+                            style={'color': '#6c757d'}
                         ),
                     ], xs=12, md=3, className="d-flex align-items-end flex-column"),
                 ])
             ])
         ], className="mb-4"),
         
-        # Results Section - Full width
-        dbc.Spinner(
-            html.Div(
-                id='results-container',
-                style={'minHeight': '200px'}
-            ),
-            color='primary',
-            type='border',
-            fullscreen=False,
-        )
+        # Results Section with Sidebar and Content
+        dbc.Row([
+            # Collapsible Sidebar - Make it narrower and add margin
+            dbc.Col([
+                dbc.Collapse(
+                    dbc.Card([
+                        dbc.CardHeader("Inferred Data Filters"),
+                        dbc.CardBody(id='filter-controls')
+                    ], className="sticky-top"),  # Make filters stick while scrolling
+                    id="sidebar-collapse",
+                    is_open=False,
+                ),
+            ], width=2, style={'paddingRight': '20px'}),  # Reduced width and added right padding
+            
+            # Main Content - Give it more space
+            dbc.Col([
+                dbc.Spinner(
+                    html.Div(
+                        id='results-container',
+                        style={'minHeight': '200px'}
+                    ),
+                    color='primary',
+                    type='border',
+                    fullscreen=False,
+                )
+            ], width=10)  # Increased width
+        ], className="g-0")  # Remove default gutters
     ])
 ], style={'backgroundColor': COLORS['background'], 'minHeight': '100vh'})
 
@@ -309,16 +335,6 @@ def handle_upload(contents, filename, current_style):
         if df.empty:
             return None, html.Div('The uploaded file is empty', style={'color': COLORS['error']}), True, current_style
         
-        # Store the full dataframe and initial limits - now using max values
-        data_store = {
-            'full_data': df.to_json(date_format='iso', orient='split'),
-            'row_limit': len(df),  # Use max rows by default
-            'col_limit': len(df.columns)  # Use max columns by default
-        }
-        
-        # Hide the upload component after successful upload
-        hidden_style = {**current_style, 'display': 'none'}
-
         # Create preview controls with max values by default
         preview_controls = dbc.Row([
             dbc.Col([
@@ -328,7 +344,7 @@ def handle_upload(contents, filename, current_style):
                     type='number',
                     min=1,
                     max=len(df),
-                    value=len(df),  # Set to max by default
+                    value=10,  # Default to 10 rows
                     style={'width': '100px'}
                 ),
             ], width='auto'),
@@ -339,7 +355,7 @@ def handle_upload(contents, filename, current_style):
                     type='number',
                     min=1,
                     max=len(df.columns),
-                    value=len(df.columns),  # Set to max by default
+                    value=len(df.columns),  # Show all columns by default
                     style={'width': '100px'}
                 ),
             ], width='auto'),
@@ -354,8 +370,8 @@ def handle_upload(contents, filename, current_style):
             ], width='auto'),
         ], className="mb-3 align-items-center")
 
-        # Create initial preview table with max limits
-        preview_df = df  # Use full dataframe for preview
+        # Create initial preview table with limited rows
+        preview_df = df.head(10)  # Only show first 10 rows
         preview_table = dbc.Table.from_dataframe(
             preview_df,
             striped=True,
@@ -365,6 +381,16 @@ def handle_upload(contents, filename, current_style):
             style={'backgroundColor': 'white'}
         )
             
+        # Store the full dataframe but with initial preview limits
+        data_store = {
+            'full_data': df.to_json(date_format='iso', orient='split'),
+            'row_limit': 10,  # Initial limit of 10 rows
+            'col_limit': len(df.columns)  # Show all columns initially
+        }
+        
+        # Hide the upload component after successful upload
+        hidden_style = {**current_style, 'display': 'none'}
+
         # Add import viz specs button
         import_button = html.Div([
             dbc.Button(
@@ -738,16 +764,18 @@ def use_viz_specs(n_clicks, current_data, current_clicks):
         logger.error("Full traceback:", exc_info=True)
         raise PreventUpdate
 
-# Modify the analyze_data callback to properly handle imported specs
+# Modify the analyze_data callback to include KPI information
 @app.long_callback(
     [Output('results-container', 'children'),
-     Output('dashboard-rendered', 'data')],  # Add this output
+     Output('dashboard-rendered', 'data'),
+     Output('data-store', 'data', allow_duplicate=True)],
     Input('analyze-button', 'n_clicks'),
     [State('data-store', 'data'),
      State('llm-provider', 'value'),
      State('api-key-input', 'value'),
      State('model-selection', 'value'),
-     State('viz-only-checkbox', 'value')],
+     State('viz-only-checkbox', 'value'),
+     State('kpi-selector', 'value')],  # Add KPI selector state
     prevent_initial_call=True,
     running=[
         (Output('analyze-button', 'disabled'), True, False),
@@ -755,10 +783,11 @@ def use_viz_specs(n_clicks, current_data, current_clicks):
         (Output('llm-provider', 'disabled'), True, False),
         (Output('api-key-input', 'disabled'), True, False),
         (Output('model-selection', 'disabled'), True, False),
+        (Output('kpi-selector', 'disabled'), True, False),  # Add KPI selector to disabled states
     ],
     progress=[Output('upload-status', 'children')],
 )
-def analyze_data(set_progress, n_clicks, json_data, provider, input_api_key, model, viz_only):
+def analyze_data(set_progress, n_clicks, json_data, provider, input_api_key, model, viz_only, kpis):
     """
     Process the uploaded dataset and generate visualizations and analysis.
     
@@ -776,6 +805,7 @@ def analyze_data(set_progress, n_clicks, json_data, provider, input_api_key, mod
         input_api_key (str): User-provided API key
         model (str): Selected model name
         viz_only (bool): Whether to skip analysis and only generate visualizations
+        kpis (list): List of selected KPI columns
         
     Returns:
         tuple: (
@@ -831,12 +861,15 @@ def analyze_data(set_progress, n_clicks, json_data, provider, input_api_key, mod
             # Skip analysis if viz_only is True
             if not viz_only:
                 set_progress(html.Div("1/5 Analyzing dataset... (Rate limiting in effect)", style={'color': COLORS['info']}))
-                analysis = pipeline.analyze_dataset(df)
+                analysis = pipeline.analyze_dataset(df, kpis)  # Pass KPIs
             else:
                 analysis = "Analysis skipped - visualizations only mode"
             
             set_progress(html.Div("2/5 Generating visualization suggestions... (Rate limiting in effect)", style={'color': COLORS['info']}))
-            viz_specs = pipeline.suggest_visualizations(df)
+            viz_specs = pipeline.suggest_visualizations(df, kpis)  # Pass KPIs
+            
+            # Store the viz specs in data_store
+            data_store['visualization_specs'] = viz_specs
             
             set_progress(html.Div("3/5 Creating visualizations...", style={'color': COLORS['info']}))
             dashboard_builder = DashboardBuilder(df, COLORS)
@@ -961,14 +994,14 @@ def analyze_data(set_progress, n_clicks, json_data, provider, input_api_key, mod
                 ])
             ])
         
-        return html.Div(components), True  # Return True to indicate dashboard is rendered
+        return html.Div(components), True, json.dumps(data_store)
         
     except Exception as e:
-        logger.error(f"Analysis error: {str(e)}", exc_info=True)
+        logger.error(f"Analysis error: {str(e)}")
         return html.Div(
             f"Error during analysis: {str(e)}", 
             style={'color': COLORS['error'], 'padding': '1rem'}
-        ), False  # Return False to indicate dashboard failed to render
+        ), False, json_data  # Return original data_store on error
 
 # Fix the tab switching callback
 @app.callback(
@@ -1065,6 +1098,342 @@ def update_button_text(dashboard_rendered: bool) -> str:
     if dashboard_rendered:
         return 'Regenerate Dashboard'
     return 'Analyze Data'
+
+# Add callback to create filter controls when dashboard is rendered
+@app.callback(
+    [Output('filter-controls', 'children'),
+     Output('sidebar-collapse', 'is_open')],
+    [Input('dashboard-rendered', 'data'),
+     Input('data-store', 'data')],
+    prevent_initial_call=True
+)
+def create_filter_controls(dashboard_rendered, json_data):
+    """
+    Create filter controls based on the dataset columns.
+    """
+    if not dashboard_rendered or not json_data:
+        return [], False
+        
+    try:
+        # Load the dataset
+        data_store = json.loads(json_data)
+        df = pd.read_json(io.StringIO(data_store['full_data']), orient='split')
+        
+        filters = []
+        
+        # Find temporal column
+        temporal_col = None
+        for col in df.columns:
+            try:
+                # Convert to datetime and check if conversion was successful
+                temp_series = pd.to_datetime(df[col], errors='coerce')
+                # Only consider as temporal if we have valid dates (not all NaT)
+                if not temp_series.isna().all():
+                    temporal_col = col
+                    df[col] = temp_series  # Keep the converted dates
+                    break
+            except:
+                continue
+        
+        # Add temporal filter if found
+        if temporal_col:
+            min_date = df[temporal_col].min()
+            max_date = df[temporal_col].max()
+            
+            if pd.notna(min_date) and pd.notna(max_date):
+                # Convert timestamps to strings for DatePickerRange
+                min_date_str = min_date.strftime('%Y-%m-%d')
+                max_date_str = max_date.strftime('%Y-%m-%d')
+                
+                filters.extend([
+                    html.H6("Time Range", className="mt-3"),
+                    dcc.DatePickerRange(
+                        id='date-range-filter',
+                        min_date_allowed=min_date_str,
+                        max_date_allowed=max_date_str,
+                        start_date=min_date_str,
+                        end_date=max_date_str,
+                        className="mb-3 w-100"
+                    )
+                ])
+        
+        # Add categorical filters
+        categorical_cols = []
+        for col in df.columns:
+            if col != temporal_col:
+                n_unique = df[col].nunique()
+                if n_unique is not None and len(df) > 0:
+                    if n_unique / len(df) < 0.05:  # Less than 5% unique values
+                        categorical_cols.append(col)
+        
+        for col in categorical_cols:
+            unique_values = sorted(df[col].dropna().unique())
+            if len(unique_values) > 0:  # Only add filter if we have values
+                filters.extend([
+                    html.H6(f"{col}", className="mt-3"),
+                    dcc.Dropdown(
+                        id={'type': 'category-filter', 'column': col},
+                        options=[{'label': str(val), 'value': str(val)} for val in unique_values],
+                        value=[],  # Default to no selection (show all)
+                        multi=True,
+                        placeholder=f"Select {col}...",
+                        className="mb-3"
+                    )
+                ])
+        
+        # Add reset button if we have any filters
+        if filters:
+            filters.append(
+                dbc.Button(
+                    "Reset Filters",
+                    id="reset-filters-button",
+                    color="secondary",
+                    size="sm",
+                    className="mt-3 w-100"
+                )
+            )
+            
+            # Wrap all filters in a div with padding
+            filters = html.Div(filters, style={'padding': '10px'})
+            return filters, True
+        
+        return [], False
+        
+    except Exception as e:
+        logger.error(f"Error creating filters: {str(e)}")
+        return [], False
+
+# Add callback to apply filters
+@app.callback(
+    Output('filter-state', 'data'),
+    [Input('date-range-filter', 'start_date'),
+     Input('date-range-filter', 'end_date'),
+     Input({'type': 'category-filter', 'column': ALL}, 'value'),
+     Input({'type': 'category-filter', 'column': ALL}, 'id'),
+     Input('reset-filters-button', 'n_clicks')],
+    prevent_initial_call=True
+)
+def update_filter_state(start_date, end_date, category_values, category_ids, reset_clicks):
+    """
+    Update the filter state based on user selections.
+    
+    Returns:
+        dict: Current state of all filters
+    """
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+        
+    # Handle reset
+    if ctx.triggered[0]['prop_id'] == 'reset-filters-button.n_clicks':
+        return None
+        
+    # Create filter state
+    filter_state = {
+        'temporal': {
+            'start_date': start_date,
+            'end_date': end_date
+        },
+        'categorical': {
+            id['column']: values for id, values in zip(category_ids, category_values)
+            if values  # Only include filters with selected values
+        }
+    }
+    
+    return filter_state
+
+# Modify the existing callbacks to apply filters
+def apply_filters(df: pd.DataFrame, filter_state: dict) -> pd.DataFrame:
+    """
+    Apply filters to the dataframe.
+    
+    Args:
+        df (pd.DataFrame): Original dataframe
+        filter_state (dict): Current filter state
+        
+    Returns:
+        pd.DataFrame: Filtered dataframe
+    """
+    if not filter_state:
+        return df
+        
+    filtered_df = df.copy()
+    
+    # Apply temporal filter
+    temporal_filter = filter_state.get('temporal', {})
+    if temporal_filter.get('start_date') and temporal_filter.get('end_date'):
+        for col in df.columns:
+            try:
+                filtered_df[col] = pd.to_datetime(filtered_df[col])
+                filtered_df = filtered_df[
+                    (filtered_df[col] >= temporal_filter['start_date']) &
+                    (filtered_df[col] <= temporal_filter['end_date'])
+                ]
+                break
+            except:
+                continue
+    
+    # Apply categorical filters
+    categorical_filters = filter_state.get('categorical', {})
+    for col, values in categorical_filters.items():
+        if values:  # Only apply filter if values are selected
+            filtered_df = filtered_df[filtered_df[col].astype(str).isin(values)]
+    
+    return filtered_df
+
+# Modify the callback to update visualizations based on filters
+@app.callback(
+    [Output({'type': 'viz', 'index': ALL}, 'figure'),
+     Output('date-range-filter', 'start_date'),
+     Output('date-range-filter', 'end_date'),
+     Output({'type': 'category-filter', 'column': ALL}, 'value')],
+    [Input('reset-filters-button', 'n_clicks'),
+     Input('filter-state', 'data')],
+    [State('data-store', 'data'),
+     State({'type': 'viz', 'index': ALL}, 'figure'),
+     State({'type': 'category-filter', 'column': ALL}, 'id')],
+    prevent_initial_call=True
+)
+def update_visualizations(reset_clicks, filter_state, json_data, current_figures, category_ids):
+    """
+    Update all visualizations based on the current filter state.
+    """
+    ctx = dash.callback_context
+    if not ctx.triggered or not json_data:
+        raise PreventUpdate
+        
+    try:
+        # Load the dataset and viz specs
+        data_store = json.loads(json_data)
+        df = pd.read_json(io.StringIO(data_store['full_data']), orient='split')
+        
+        # Get viz specs from the correct location in data_store
+        viz_specs = None
+        if 'imported_viz_specs' in data_store:
+            viz_specs = data_store['imported_viz_specs']
+        elif 'visualization_specs' in data_store:
+            viz_specs = data_store['visualization_specs']
+            
+        if not viz_specs:
+            logger.warning("No visualization specifications found in data store")
+            return current_figures, None, None, [[] for _ in category_ids]
+        
+        # If reset button clicked, reset all filters and recreate figures with original data
+        if ctx.triggered[0]['prop_id'] == 'reset-filters-button.n_clicks':
+            logger.info("Resetting all filters")
+            dashboard_builder = DashboardBuilder(df, COLORS)
+            figures = dashboard_builder.create_all_figures(viz_specs)
+            
+            # Ensure we have the same number of figures as current_figures
+            new_figures = []
+            for i in range(len(current_figures)):
+                if i < len(figures):
+                    fig, _ = list(figures.values())[i]
+                    new_figures.append(fig)
+                else:
+                    new_figures.append(current_figures[i])
+            
+            # Find temporal column and its min/max dates
+            temporal_col = None
+            min_date = None
+            max_date = None
+            for col in df.columns:
+                try:
+                    temp_series = pd.to_datetime(df[col], errors='coerce')
+                    if not temp_series.isna().all():
+                        temporal_col = col
+                        df[col] = temp_series
+                        min_date = df[col].min().strftime('%Y-%m-%d')
+                        max_date = df[col].max().strftime('%Y-%m-%d')
+                        break
+                except:
+                    continue
+            
+            # Return reset state
+            return new_figures, min_date, max_date, [[] for _ in category_ids]
+        
+        # Handle normal filter updates
+        if filter_state:
+            filtered_df = df.copy()
+            # Apply temporal filter
+            temporal_filter = filter_state.get('temporal', {})
+            if temporal_filter.get('start_date') and temporal_filter.get('end_date'):
+                for col in df.columns:
+                    try:
+                        filtered_df[col] = pd.to_datetime(filtered_df[col], errors='coerce')
+                        if not filtered_df[col].isna().all():
+                            filtered_df = filtered_df[
+                                (filtered_df[col] >= temporal_filter['start_date']) &
+                                (filtered_df[col] <= temporal_filter['end_date'])
+                            ]
+                            logger.info(f"Applied temporal filter on column {col}")
+                            break
+                    except Exception as e:
+                        logger.debug(f"Could not convert column {col} to datetime: {str(e)}")
+                        continue
+            
+            # Apply categorical filters
+            categorical_filters = filter_state.get('categorical', {})
+            for col, values in categorical_filters.items():
+                if values:  # Only apply filter if values are selected
+                    filtered_df = filtered_df[filtered_df[col].astype(str).isin(values)]
+                    logger.info(f"Applied categorical filter on column {col}")
+            
+            # Create new figures with filtered data
+            dashboard_builder = DashboardBuilder(filtered_df, COLORS)
+            figures = dashboard_builder.create_all_figures(viz_specs)
+            
+            # Ensure we have the same number of figures as current_figures
+            new_figures = []
+            for i in range(len(current_figures)):
+                if i < len(figures):
+                    fig, _ = list(figures.values())[i]
+                    new_figures.append(fig)
+                else:
+                    new_figures.append(current_figures[i])
+            
+            logger.info(f"Created {len(new_figures)} new figures with filtered data")
+            
+            # Return filtered state
+            return (
+                new_figures,
+                temporal_filter.get('start_date'),
+                temporal_filter.get('end_date'),
+                [categorical_filters.get(cat_id['column'], []) for cat_id in category_ids]
+            )
+        
+        # Return current state if no filters
+        return current_figures, None, None, [[] for _ in category_ids]
+        
+    except Exception as e:
+        logger.error(f"Error updating visualizations: {str(e)}")
+        # Return current state on error
+        return current_figures, None, None, [[] for _ in category_ids]
+
+# Add callback to populate KPI selector when data is loaded
+@app.callback(
+    Output('kpi-selector', 'options'),
+    Input('data-store', 'data'),
+    prevent_initial_call=True
+)
+def update_kpi_selector(json_data):
+    """
+    Update KPI selector options based on loaded dataset columns.
+    """
+    if not json_data:
+        return []
+        
+    try:
+        data_store = json.loads(json_data)
+        df = pd.read_json(io.StringIO(data_store['full_data']), orient='split')
+        
+        # Create options from column names
+        options = [{'label': col, 'value': col} for col in df.columns]
+        return options
+        
+    except Exception as e:
+        logger.error(f"Error updating KPI selector: {str(e)}")
+        return []
 
 if __name__ == '__main__':
     app.run_server(
