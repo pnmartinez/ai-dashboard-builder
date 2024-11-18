@@ -27,6 +27,8 @@ from dotenv import load_dotenv
 import dash_dangerously_set_inner_html
 import markdown2
 import plotly.graph_objects as go
+import numpy as np
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -280,6 +282,86 @@ def toggle_api_key(provider: str, model: str) -> tuple:
     else:
         return True, True, '', 'Enter API Key'
 
+# Add this helper function after the imports and before the app initialization
+def smart_numeric_conversion(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Intelligently convert string columns to numeric types where possible.
+    Handles various number formats, currencies, percentages, and is fault-tolerant.
+    
+    Args:
+        df (pd.DataFrame): Input dataframe
+        
+    Returns:
+        pd.DataFrame: Dataframe with converted numeric columns
+    """
+    def clean_numeric_string(s):
+        if pd.isna(s):
+            return s
+        if not isinstance(s, str):
+            return s
+            
+        # Remove currency symbols, parentheses for negative numbers, and other common characters
+        s = str(s).strip()
+        s = re.sub(r'[($€£¥,)]', '', s)
+        
+        # Handle parentheses negative numbers e.g., "(123)" -> "-123"
+        if s.startswith('(') and s.endswith(')'):
+            s = '-' + s[1:-1]
+            
+        # Handle percentages
+        if s.endswith('%'):
+            try:
+                return float(s.rstrip('%')) / 100
+            except:
+                return s
+                
+        # Handle thousands/millions/billions indicators
+        multipliers = {'K': 1000, 'M': 1000000, 'B': 1000000000}
+        if s and s[-1].upper() in multipliers:
+            try:
+                return float(s[:-1]) * multipliers[s[-1].upper()]
+            except:
+                return s
+                
+        return s
+
+    def try_numeric_conversion(series):
+        # First clean the strings
+        cleaned = series.map(clean_numeric_string)
+        
+        # Try converting to numeric
+        try:
+            numeric = pd.to_numeric(cleaned, errors='coerce')
+            # Only convert if we don't lose too many values
+            na_ratio = numeric.isna().sum() / len(numeric)
+            if na_ratio < 0.3:  # Allow up to 30% NaN values
+                return numeric
+        except:
+            pass
+        
+        return series
+
+    # Process each column
+    df_converted = df.copy()
+    for col in df.columns:
+        # Skip if already numeric
+        if np.issubdtype(df[col].dtype, np.number):
+            continue
+            
+        # Skip if datetime
+        try:
+            pd.to_datetime(df[col], errors='raise')
+            continue
+        except:
+            pass
+            
+        # Try converting to numeric
+        df_converted[col] = try_numeric_conversion(df[col])
+
+    logger.info(f"Completed smart numeric conversion: {df_converted.head()}")
+        
+    return df_converted
+
 # Modify the file upload callback
 @app.callback(
     [Output('data-store', 'data'),
@@ -335,6 +417,9 @@ def handle_upload(contents, filename, current_style):
         if df.empty:
             return None, html.Div('The uploaded file is empty', style={'color': COLORS['error']}), True, current_style
         
+        # Apply smart numeric conversion
+        df = smart_numeric_conversion(df)
+        
         # Create preview controls with max values by default
         preview_controls = dbc.Row([
             dbc.Col([
@@ -344,7 +429,7 @@ def handle_upload(contents, filename, current_style):
                     type='number',
                     min=1,
                     max=len(df),
-                    value=10,  # Default to 10 rows
+                    value=len(df),  # Default to 10 rows
                     style={'width': '100px'}
                 ),
             ], width='auto'),
