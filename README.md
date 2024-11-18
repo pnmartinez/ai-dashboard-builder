@@ -6,7 +6,7 @@ This is currently structured as a simple Plotly app that dynamically builds a da
 - Use local LLMs (ollama)
 - Use external providers by providing your API KEY.
 
-![image](https://github.com/user-attachments/assets/4c718f08-7c2c-4c99-9220-6766afd7c41b)
+![image](https://github.com/user-attachments/assets/5f266f41-34c8-4d2c-b689-40ace28433da)
 
 ## Quick Start with Docker
 
