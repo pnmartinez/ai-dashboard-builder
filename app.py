@@ -78,7 +78,7 @@ def get_api_key(model_name: str) -> str:
         return os.getenv('ANTHROPIC_API_KEY', '')
     elif 'mistral' in model_name:
         return os.getenv('MISTRAL_API_KEY', '')
-    elif 'mixtral' in model_name or 'groq' in model_name or 'llama' in model_name:
+    elif 'mixtral' in model_name or 'groq' in model_name or 'llama' in model_name or 'gemma' in model_name:
         return os.getenv('GROQ_API_KEY', '')
     return ''
 
@@ -149,10 +149,9 @@ app.layout = html.Div([
                                 options=[
                                     {'label': 'GPT-4o-mini', 'value': 'gpt-4o-mini'},
                                     {'label': 'GPT-3.5-turbo', 'value': 'gpt-3.5-turbo'},
-                                  #  {'label': 'Claude Sonnet 3.5', 'value': 'claude-3-sonnet-20240229'},
-                                   # {'label': 'Mistral Large', 'value': 'mistral-large'},
                                     {'label': 'Groq Mixtral', 'value': 'mixtral-8x7b-32768'},
                                     {'label': 'Groq Llama 3.1 70b', 'value': 'llama-3.1-70b-versatile'},
+                                    {'label': 'Groq Gemma 7B', 'value': 'gemma-7b-it'},
                                 ],
                                 value='gpt-4o-mini',
                                 className="mb-2"
@@ -581,7 +580,6 @@ def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
         # Use absolute path for viz specs directory
         viz_specs_dir = os.path.join(BASE_DIR, 'llm_responses')
         viz_specs_files = glob.glob(os.path.join(viz_specs_dir, 'viz_specs_*.json'))
-        viz_specs_files.sort(reverse=True)  # Most recent first
         
         if not viz_specs_files:
             return True, html.Div("No visualization specifications found", className="text-muted")
@@ -592,35 +590,60 @@ def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
             try:
                 with open(file_path, 'r') as f:
                     specs = json.load(f)
-                    timestamp = specs.get('timestamp', 'Unknown')
+                    # Parse timestamp to datetime for sorting
+                    timestamp_str = specs.get('timestamp', 'Unknown')
+                    try:
+                        timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
+                        formatted_timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                    except:
+                        formatted_timestamp = timestamp_str
+                        timestamp = datetime.min  # For sorting purposes
+                    
                     model = specs.get('model', 'Unknown')
                     provider = specs.get('provider', 'Unknown')
                     
-                    file_list.append(
-                        dbc.ListGroupItem(
-                            [
-                                html.Div(
-                                    [
-                                        html.H6(f"Generated: {timestamp}", className="mb-1"),
-                                        html.Small(f"Model: {model} ({provider})", className="text-muted")
-                                    ]
-                                ),
-                                dbc.Button(
-                                    "Use",
-                                    id={'type': 'use-viz-specs', 'index': file_path},
-                                    color="primary",
-                                    size="sm",
-                                    className="ms-auto"
-                                )
-                            ],
-                            className="d-flex justify-content-between align-items-center"
-                        )
-                    )
+                    file_list.append({
+                        'path': file_path,
+                        'timestamp': timestamp,  # For sorting
+                        'display_data': {
+                            'timestamp': formatted_timestamp,
+                            'model': model,
+                            'provider': provider
+                        }
+                    })
             except Exception as e:
                 logger.error(f"Error reading viz specs file {file_path}: {str(e)}")
                 continue
         
-        return True, dbc.ListGroup(file_list)
+        # Sort by timestamp, most recent first
+        file_list.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        # Create list items
+        list_items = [
+            dbc.ListGroupItem(
+                [
+                    html.Div(
+                        [
+                            html.H6(f"Generated: {item['display_data']['timestamp']}", className="mb-1"),
+                            html.Small(
+                                f"Model: {item['display_data']['model']} ({item['display_data']['provider']})", 
+                                className="text-muted"
+                            )
+                        ]
+                    ),
+                    dbc.Button(
+                        "Use",
+                        id={'type': 'use-viz-specs', 'index': item['path']},
+                        color="primary",
+                        size="sm",
+                        className="ms-auto"
+                    )
+                ],
+                className="d-flex justify-content-between align-items-center"
+            ) for item in file_list
+        ]
+        
+        return True, dbc.ListGroup(list_items)
     
     return False, None
 
@@ -976,7 +999,9 @@ app.clientside_callback(
     """
     function(n_clicks, code_content) {
         if (n_clicks) {
-            navigator.clipboard.writeText(code_content.props.children[0].props.children);
+            // Extract the code from the Pre component
+            const code = code_content.props.children;
+            navigator.clipboard.writeText(code);
             return "Copied!";
         }
         return "Copy Code";

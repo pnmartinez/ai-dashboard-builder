@@ -89,7 +89,7 @@ class LLMPipeline:
                 self.api_key = os.getenv('ANTHROPIC_API_KEY')
             elif 'mistral' in model_name:
                 self.api_key = os.getenv('MISTRAL_API_KEY')
-            elif 'mixtral' in model_name or 'groq' in model_name or 'llama' in model_name:
+            elif 'mixtral' in model_name or 'groq' in model_name or 'llama' in model_name or 'gemma' in model_name:
                 self.api_key = os.getenv('GROQ_API_KEY')
             else:
                 self.api_key = os.getenv('LLM_API_KEY')
@@ -189,7 +189,7 @@ class LLMPipeline:
             return self.rate_limits['anthropic']
         elif 'mistral' in self.model_name:
             return self.rate_limits['mistral']
-        elif 'mixtral' in self.model_name or 'groq' in self.model_name or 'llama' in self.model_name:
+        elif 'mixtral' in self.model_name or 'groq' in self.model_name or 'llama' in self.model_name or 'gemma' in self.model_name:
             return self.rate_limits['groq']
         return self.rate_limits['default']
 
@@ -206,7 +206,7 @@ class LLMPipeline:
             delay_needed = self._get_rate_limit_delay()
             
             # Special handling for Groq's TPM limits
-            if ('groq' in self.model_name or 'mixtral' in self.model_name or 'llama' in self.model_name):
+            if ('groq' in self.model_name or 'mixtral' in self.model_name or 'llama' in self.model_name or 'gemma' in self.model_name):
                 # Reset token counter if a minute has passed
                 if current_time - self.groq_last_reset >= 60:
                     self.groq_tokens_used = 0
@@ -379,7 +379,7 @@ class LLMPipeline:
                 response_json = response.json()
                 response_text = response_json['choices'][0]['message']['content']
 
-            elif 'groq' in self.model_name or 'mixtral' in self.model_name or 'llama' in self.model_name:
+            elif 'groq' in self.model_name or 'mixtral' in self.model_name or 'llama' in self.model_name or 'gemma' in self.model_name:
                 # Groq API
                 headers = {
                     "Authorization": f"Bearer {self.api_key}",
@@ -548,7 +548,7 @@ class LLMPipeline:
                 data_summary = {
                     "columns": list(df.columns),
                     "sample_rows": [{k: self._serialize_for_json(v) for k, v in row.items()} 
-                                  for row in df.head(5).to_dict('records')],
+                                  for row in df.head(3).to_dict('records')],
                     "data_types": {str(k): str(v) for k, v in df.dtypes.to_dict().items()},
                     "null_counts": {k: self._serialize_for_json(v) for k, v in df.isnull().sum().to_dict().items()},
                     "unique_counts": {k: self._serialize_for_json(v) for k, v in df.nunique().to_dict().items()}
@@ -907,7 +907,7 @@ Example response format:
 {pattern_description}
 
 Dataset sample:
-{df.head(5).to_string()}
+{df.head(3).to_string()}
 
 Please provide:
 1. Possible explanations for this pattern
