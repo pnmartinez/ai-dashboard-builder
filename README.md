@@ -12,10 +12,10 @@ This is currently structured as a simple Plotly app that dynamically builds a da
 
 ### Prerequisites
 - Docker and Docker Compose installed on your system
-- (Optional) API keys for external LLM providers
 
-### API Key Setup (Optional)
-If you want to use external LLM providers, you can supply the KEY in the UI or create a `.env` file in the root directory with your API keys:
+### Option 1: Running with External API Providers
+
+1. You can supply the API KEY directly in the UI or create a `.env` file in the root directory:
 
 ```bash
 # .env file
@@ -23,7 +23,12 @@ OPENAI_API_KEY=your_openai_key_here
 GROQ_API_KEY=your_groq_key_here
 ```
 
-### Option 1: Running with External Ollama
+2. Run the Docker container:
+```bash
+docker compose up --build
+```
+
+### Option 2: Running with External Ollama
 
 1. Clone the repository:
 ```bash
@@ -37,7 +42,7 @@ git clone https://github.com/pnmartinez/ai-dashboard-builder.git
 docker compose up --build
 ```
 
-### Option 2: Running with Bundled Ollama
+### Option 3: Running with Bundled Ollama
 
 1. Clone the repository:
 ```bash
@@ -51,4 +56,4 @@ docker compose -f docker-compose.all-in-one.yml up --build
 
 The bundled version will automatically pull and set up ollama with the required model (llama3.1). First run could take some minutes to pull the model.
 
-3. For either option, open your browser and navigate to `http://localhost:8050` to see the dashboard.
+3. For any of the options above, open your browser and navigate to `http://localhost:8050` to see the dashboard.
