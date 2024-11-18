@@ -14,6 +14,15 @@ This is currently structured as a simple Plotly app that dynamically builds a da
 - Docker and Docker Compose installed on your system
 - (Optional) API keys for external LLM providers
 
+### API Key Setup (Optional)
+If you want to use external LLM providers, you can supply the KEY in the UI or create a `.env` file in the root directory with your API keys:
+
+```bash
+# .env file
+OPENAI_API_KEY=your_openai_key_here
+GROQ_API_KEY=your_groq_key_here
+```
+
 ### Option 1: Running with External Ollama
 
 1. Clone the repository:
