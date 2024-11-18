@@ -12,6 +12,7 @@ from dash.exceptions import PreventUpdate
 from dash.long_callback import DiskcacheLongCallbackManager
 import diskcache
 import os
+from io import BytesIO
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -121,7 +122,7 @@ app.layout = html.Div([
                                 id='upload-data',
                                 children=html.Div([
                                     'Drag and Drop or ',
-                                    html.A('Select a CSV File')
+                                    html.A('Select a CSV/Excel File')
                                 ]),
                                 style={
                                     'width': '100%',
@@ -178,15 +179,15 @@ def toggle_api_key(provider):
     show_api = provider == 'external'
     return show_api, show_api
 
-# Modify the file upload callback to include the upload container visibility
+# Modify the file upload callback
 @app.callback(
     [Output('data-store', 'data'),
      Output('upload-status', 'children'),
      Output('analyze-button', 'disabled'),
-     Output('upload-data', 'style')],  # Add style output
+     Output('upload-data', 'style')],
     Input('upload-data', 'contents'),
     [State('upload-data', 'filename'),
-     State('upload-data', 'style')],  # Add style state
+     State('upload-data', 'style')],
     prevent_initial_call=True
 )
 def handle_upload(contents, filename, current_style):
@@ -197,10 +198,17 @@ def handle_upload(contents, filename, current_style):
         content_type, content_string = contents.split(',')
         decoded = base64.b64decode(content_string)
         
-        if 'csv' not in filename.lower():
-            return None, html.Div('Please upload a CSV file', style={'color': COLORS['error']}), True, current_style
+        # Check file extension
+        file_extension = filename.lower().split('.')[-1]
+        if file_extension not in ['csv', 'xlsx', 'xls']:
+            return None, html.Div('Please upload a CSV or Excel file', style={'color': COLORS['error']}), True, current_style
             
-        df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+        # Read the file based on its extension
+        if file_extension == 'csv':
+            df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+        else:  # Excel files
+            df = pd.read_excel(BytesIO(decoded))
+            
         if df.empty:
             return None, html.Div('The uploaded file is empty', style={'color': COLORS['error']}), True, current_style
         

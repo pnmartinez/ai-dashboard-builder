@@ -2,7 +2,10 @@ version: '3.8'
 
 services:
   dashboard:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+      network: host
     ports:
       - "8050:8050"
     volumes:
@@ -10,12 +13,13 @@ services:
       - ./cache:/app/cache
     environment:
       - LLM_API_KEY=${LLM_API_KEY}
-      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_HOST=host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    network_mode: "host"
     command: python app.py
+    networks:
+      - ai-dashboard-net
 
 networks:
-  default:
+  ai-dashboard-net:
     driver: bridge

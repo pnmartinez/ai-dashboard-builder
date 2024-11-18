@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.ollama
+      network: host
     image: ollama_custom:latest
     container_name: ollama
     ports:
@@ -23,6 +24,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dashboard
+      network: host
     ports:
       - "8050:8050"
     volumes:
