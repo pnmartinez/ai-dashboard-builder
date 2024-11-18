@@ -35,18 +35,29 @@ class DashboardBuilder:
             title = viz_spec.get('title', 'Visualization')
             params = viz_spec.get('parameters', {})
             
-            # Validate column names
+            # Validate column names and adjust parameters if needed
             if x and x not in self.df.columns:
+                logger.warning(f"Column '{x}' not found in dataframe, skipping visualization")
                 raise ValueError(f"Column '{x}' not found in dataframe")
+            
             if y and y not in self.df.columns:
+                logger.warning(f"Column '{y}' not found in dataframe, skipping visualization")
                 raise ValueError(f"Column '{y}' not found in dataframe")
             
-            # # Only validate color if it's specified and looks like a column name
-            # # (doesn't start with # and isn't a named color)
-            # if (color and color not in self.df.columns and 
-            #     not color.startswith('#') and 
-            #     not color.replace(' ', '').isalpha()):
-            #     raise ValueError(f"Column '{color}' not found in dataframe")
+            # Handle size parameter for scatter plots
+            if viz_type == 'scatter' and 'size' in params:
+                size_value = params['size']
+                if isinstance(size_value, (int, float)):
+                    # If size is a number, use it directly
+                    size = size_value
+                elif isinstance(size_value, str) and size_value not in self.df.columns:
+                    # If size is a string but not a column name, remove it
+                    logger.warning(f"Size column '{size_value}' not found, using default size")
+                    size = None
+                else:
+                    size = size_value
+            else:
+                size = None
             
             # Create figure based on visualization type
             if viz_type == 'line':
@@ -99,7 +110,7 @@ class DashboardBuilder:
                     y=y,
                     color=color if color in self.df.columns else None,
                     title=title,
-                    size=params.get('size'),
+                    size=size,
                     hover_data=params.get('hover_data', None),
                     color_discrete_sequence=[color] if color and color not in self.df.columns else None
                 )
