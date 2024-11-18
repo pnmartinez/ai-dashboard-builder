@@ -4,7 +4,9 @@ Drop your data and let the AI make a dashboard and extract insights.
 
 This is currently structured as a simple Plotly app that dynamically builds a dashboard by analyzing the dataset with LLMs. You can:
 - Use local LLMs (ollama)
-- Use external providers by providing your API KEY
+- Use external providers by providing your API KEY.
+
+![image](https://github.com/user-attachments/assets/4c718f08-7c2c-4c99-9220-6766afd7c41b)
 
 ## Quick Start with Docker
 
