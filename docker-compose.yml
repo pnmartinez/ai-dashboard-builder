@@ -11,8 +11,9 @@ services:
     volumes:
       - ./llm_responses:/app/llm_responses
       - ./cache:/app/cache
+    env_file:
+      - .env
     environment:
-      - LLM_API_KEY=${LLM_API_KEY}
       - OLLAMA_HOST=host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -23,3 +24,7 @@ services:
 networks:
   ai-dashboard-net:
     driver: bridge
+
+#networks:
+ # default:
+  #  driver: bridge

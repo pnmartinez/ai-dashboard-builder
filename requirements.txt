@@ -5,6 +5,8 @@ plotly==5.19.0
 numpy==1.26.4
 requests==2.31.0
 openai==1.12.0
-python-dotenv==1.0.1
+python-dotenv==1.0.0
 anthropic==0.18.1
-openpyxl==3.1.2 
+openpyxl==3.1.2
+markdown2==2.4.12
+dash-dangerously-set-inner-html==0.0.2 

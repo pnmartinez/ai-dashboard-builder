@@ -1,3 +1,11 @@
+"""
+AI Dashboard Builder - A Dash application for automated dashboard creation using LLMs.
+
+This module serves as the main entry point for the AI Dashboard Builder application.
+It handles the web interface, data processing, and visualization generation using
+various LLM providers.
+"""
+
 import pandas as pd
 from dash import Dash, html, dcc, Input, Output, State, no_update, long_callback, MATCH, ALL
 import dash
@@ -15,6 +23,9 @@ import os
 from io import BytesIO
 import glob
 from datetime import datetime
+from dotenv import load_dotenv
+import dash_dangerously_set_inner_html
+import markdown2
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +58,30 @@ MAX_PREVIEW_COLS = 20    # Default maximum columns to show in preview
 # Define the base directory for the application
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Load environment variables
+load_dotenv()
+
+# Function to get the appropriate API key based on model
+def get_api_key(model_name: str) -> str:
+    """
+    Get the appropriate API key based on the model name.
+    
+    Args:
+        model_name (str): Name of the LLM model (e.g., 'gpt', 'claude', 'mistral')
+        
+    Returns:
+        str: API key for the specified model, or empty string if not found
+    """
+    if 'gpt' in model_name:
+        return os.getenv('OPENAI_API_KEY', '')
+    elif 'claude' in model_name:
+        return os.getenv('ANTHROPIC_API_KEY', '')
+    elif 'mistral' in model_name:
+        return os.getenv('MISTRAL_API_KEY', '')
+    elif 'mixtral' in model_name or 'groq' in model_name or 'llama' in model_name:
+        return os.getenv('GROQ_API_KEY', '')
+    return ''
+
 # Initialize app with long callback manager and title
 app = Dash(
     __name__, 
@@ -59,11 +94,11 @@ app = Dash(
 
 # Set the title for the browser tab
 app.title = "AI Dashboard Builder"
-
 # Modify the layout for responsive design
 app.layout = html.Div([
     dcc.Store(id='data-store', storage_type='memory'),
     dcc.Store(id='viz-state', storage_type='memory'),
+    dcc.Store(id='dashboard-rendered', storage_type='memory'),
     
     # Main container
     dbc.Container(fluid=True, children=[
@@ -114,8 +149,10 @@ app.layout = html.Div([
                                 options=[
                                     {'label': 'GPT-4o-mini', 'value': 'gpt-4o-mini'},
                                     {'label': 'GPT-3.5-turbo', 'value': 'gpt-3.5-turbo'},
-                                 #   {'label': 'Claude Sonnet 3.5', 'value': 'claude-3-sonnet-20240229'},
-                                  #  {'label': 'Mistral Large', 'value': 'mistral-large'}
+                                  #  {'label': 'Claude Sonnet 3.5', 'value': 'claude-3-sonnet-20240229'},
+                                   # {'label': 'Mistral Large', 'value': 'mistral-large'},
+                                    {'label': 'Groq Mixtral', 'value': 'mixtral-8x7b-32768'},
+                                    {'label': 'Groq Llama 3.1 70b', 'value': 'llama-3.1-70b-versatile'},
                                 ],
                                 value='gpt-4o-mini',
                                 className="mb-2"
@@ -162,7 +199,7 @@ app.layout = html.Div([
                         dbc.Checkbox(
                             id='viz-only-checkbox',
                             label="Visualizations only (faster process)",
-                            value=False,
+                            value=True,
                             className="mt-2",
                             style={'color': '#6c757d'}  # Using a muted secondary text color
                         ),
@@ -187,12 +224,36 @@ app.layout = html.Div([
 # Callback to toggle API key and model selection visibility
 @app.callback(
     [Output('api-key-collapse', 'is_open'),
-     Output('model-selection-collapse', 'is_open')],
-    Input('llm-provider', 'value')
+     Output('model-selection-collapse', 'is_open'),
+     Output('api-key-input', 'value'),
+     Output('api-key-input', 'placeholder')],
+    [Input('llm-provider', 'value'),
+     Input('model-selection', 'value')]
 )
-def toggle_api_key(provider):
-    show_api = provider == 'external'
-    return show_api, show_api
+def toggle_api_key(provider: str, model: str) -> tuple:
+    """
+    Toggle visibility and populate API key input based on provider selection.
+    
+    Args:
+        provider (str): Selected provider ('local' or 'external')
+        model (str): Selected model name
+        
+    Returns:
+        tuple: (
+            bool: Whether to show API key input,
+            bool: Whether to show model selection,
+            str: API key value if available,
+            str: Placeholder text for API key input
+        )
+    """
+    if provider != 'external':
+        return False, False, '', 'Enter API Key'
+    
+    api_key = get_api_key(model)
+    if api_key:
+        return True, True, api_key, 'API KEY loaded'
+    else:
+        return True, True, '', 'Enter API Key'
 
 # Modify the file upload callback
 @app.callback(
@@ -206,6 +267,28 @@ def toggle_api_key(provider):
     prevent_initial_call=True
 )
 def handle_upload(contents, filename, current_style):
+    """
+    Process uploaded data file and prepare it for analysis.
+    
+    Handles CSV and Excel file uploads, creates a preview table,
+    and stores the data for analysis.
+    
+    Args:
+        contents (str): Base64 encoded file contents
+        filename (str): Name of uploaded file
+        current_style (dict): Current upload component style
+        
+    Returns:
+        tuple: (
+            str: JSON string of stored data,
+            html.Div: Upload status and preview components,
+            bool: Whether analyze button should be enabled,
+            dict: Updated upload component style
+        )
+        
+    Raises:
+        Exception: If file reading or processing fails
+    """
     if contents is None:
         return no_update, no_update, True, current_style
     
@@ -382,6 +465,24 @@ def handle_upload(contents, filename, current_style):
     prevent_initial_call=True
 )
 def update_preview(n_clicks, rows, cols, json_data):
+    """
+    Update the data preview based on user-specified row and column limits.
+    
+    Args:
+        n_clicks (int): Number of update button clicks
+        rows (int): Number of rows to show
+        cols (int): Number of columns to show
+        json_data (str): Current data store JSON string
+        
+    Returns:
+        tuple: (
+            list: Updated preview table components,
+            str: Updated data store JSON with new limits
+        )
+        
+    Raises:
+        PreventUpdate: If button not clicked or no data
+    """
     if not n_clicks or not json_data:
         raise PreventUpdate
         
@@ -452,6 +553,24 @@ def change_file(n_clicks, current_style):
     prevent_initial_call=True
 )
 def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
+    """
+    Toggle and populate the visualization specifications import modal.
+    
+    Args:
+        import_clicks (int): Number of clicks on import button
+        close_clicks (int): Number of clicks on close button
+        is_open (bool): Current modal state
+        
+    Returns:
+        tuple: (
+            bool: Whether modal should be open,
+            html.Div: Modal content if opening
+        )
+        
+    Note:
+        When opening, scans for and lists available visualization specification files
+        sorted by most recent first.
+    """
     ctx = dash.callback_context
     if not ctx.triggered:
         return False, None
@@ -517,6 +636,25 @@ def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
     prevent_initial_call=True
 )
 def use_viz_specs(n_clicks, current_data, current_clicks):
+    """
+    Import and apply previously saved visualization specifications.
+    
+    Args:
+        n_clicks (list): List of click counts for each import button
+        current_data (str): Current data store JSON string
+        current_clicks (int): Current analyze button click count
+        
+    Returns:
+        tuple: (
+            str: Updated data store JSON,
+            int: Incremented analyze button clicks,
+            bool: Whether to close the modal,
+            bool: Whether visualizations are active
+        )
+        
+    Raises:
+        PreventUpdate: If no import button was clicked
+    """
     ctx = dash.callback_context
     if not any(n_clicks):
         raise PreventUpdate
@@ -579,7 +717,8 @@ def use_viz_specs(n_clicks, current_data, current_clicks):
 
 # Modify the analyze_data callback to properly handle imported specs
 @app.long_callback(
-    Output('results-container', 'children'),
+    [Output('results-container', 'children'),
+     Output('dashboard-rendered', 'data')],  # Add this output
     Input('analyze-button', 'n_clicks'),
     [State('data-store', 'data'),
      State('llm-provider', 'value'),
@@ -596,11 +735,42 @@ def use_viz_specs(n_clicks, current_data, current_clicks):
     ],
     progress=[Output('upload-status', 'children')],
 )
-def analyze_data(set_progress, n_clicks, json_data, provider, api_key, model, viz_only):
+def analyze_data(set_progress, n_clicks, json_data, provider, input_api_key, model, viz_only):
+    """
+    Process the uploaded dataset and generate visualizations and analysis.
+    
+    This function handles the main data analysis pipeline:
+    1. Dataset analysis (if not viz_only)
+    2. Visualization suggestion generation
+    3. Dashboard creation
+    4. Insights summary (if not viz_only)
+    
+    Args:
+        set_progress: Callback to update progress status
+        n_clicks (int): Number of button clicks
+        json_data (str): JSON string containing dataset and metadata
+        provider (str): Selected LLM provider ('local' or 'external')
+        input_api_key (str): User-provided API key
+        model (str): Selected model name
+        viz_only (bool): Whether to skip analysis and only generate visualizations
+        
+    Returns:
+        tuple: (
+            html.Div: Dashboard components,
+            bool: Whether dashboard was successfully rendered
+        )
+        
+    Raises:
+        PreventUpdate: If no clicks or no data
+        ValueError: If API key is missing for external provider
+    """
     if not n_clicks or not json_data:
         raise PreventUpdate
     
     try:
+        # Get API key from environment if available, otherwise use input
+        api_key = get_api_key(model) or input_api_key
+        
         data_store = json.loads(json_data)
         df_full = pd.read_json(io.StringIO(data_store['full_data']), orient='split')
         
@@ -637,12 +807,12 @@ def analyze_data(set_progress, n_clicks, json_data, provider, api_key, model, vi
             
             # Skip analysis if viz_only is True
             if not viz_only:
-                set_progress(html.Div("1/5 Analyzing dataset...", style={'color': COLORS['info']}))
+                set_progress(html.Div("1/5 Analyzing dataset... (Rate limiting in effect)", style={'color': COLORS['info']}))
                 analysis = pipeline.analyze_dataset(df)
             else:
                 analysis = "Analysis skipped - visualizations only mode"
             
-            set_progress(html.Div("2/5 Generating visualization suggestions...", style={'color': COLORS['info']}))
+            set_progress(html.Div("2/5 Generating visualization suggestions... (Rate limiting in effect)", style={'color': COLORS['info']}))
             viz_specs = pipeline.suggest_visualizations(df)
             
             set_progress(html.Div("3/5 Creating visualizations...", style={'color': COLORS['info']}))
@@ -651,7 +821,7 @@ def analyze_data(set_progress, n_clicks, json_data, provider, api_key, model, vi
             
             # Skip summary if viz_only is True
             if not viz_only:
-                set_progress(html.Div("4/5 Generating insights summary...", style={'color': COLORS['info']}))
+                set_progress(html.Div("4/5 Generating insights summary... (Rate limiting in effect)", style={'color': COLORS['info']}))
                 summary = pipeline.summarize_analysis(analysis, viz_specs)
             else:
                 summary = "Summary skipped - visualizations only mode"
@@ -662,61 +832,63 @@ def analyze_data(set_progress, n_clicks, json_data, provider, api_key, model, vi
             # Visualizations Section (First)
             dbc.Card([
                 dbc.CardHeader(
-                    html.H3("Visualizations", className="mb-0")
+                    html.H3("Dashboard", className="mb-0")
                 ),
                 dbc.CardBody([
                     dbc.Row([
-                        dbc.Col([
-                            # Tabs for each visualization
-                            dbc.Card([
-                                dbc.CardHeader(
-                                    dbc.Tabs([
-                                        dbc.Tab(label="Chart", tab_id=f"chart-tab-{i}"),
-                                        dbc.Tab(label="Code", tab_id=f"code-tab-{i}")
-                                    ],
-                                    id={'type': 'tabs', 'index': i},
-                                    active_tab=f"chart-tab-{i}"),
-                                ),
-                                dbc.CardBody([
-                                    # Content for both tabs
-                                    html.Div([
-                                        # Chart tab content
-                                        html.Div(
-                                            dcc.Graph(
-                                                id={'type': 'viz', 'index': i},
-                                                figure=fig,
-                                                config={'displayModeBar': False}
-                                            ),
-                                            id={'type': 'chart-content', 'index': i},
-                                            style={'display': 'block'}
-                                        ),
-                                        # Code tab content
-                                        html.Div([
-                                            html.Pre(
-                                                code,
-                                                style={
-                                                    'backgroundColor': COLORS['background'],
-                                                    'padding': '1rem',
-                                                    'borderRadius': '5px',
-                                                    'whiteSpace': 'pre-wrap',
-                                                    'fontSize': '0.8rem'
-                                                }
-                                            ),
-                                            dbc.Button(
-                                                "Copy Code",
-                                                id={'type': 'copy-btn', 'index': i},
-                                                color="primary",
-                                                size="sm",
-                                                className="mt-2"
-                                            )
+                        # Create pairs of visualizations for two-column layout
+                        *[
+                            dbc.Col([
+                                # Tabs for visualization
+                                dbc.Card([
+                                    dbc.CardHeader(
+                                        dbc.Tabs([
+                                            dbc.Tab(label="Chart", tab_id=f"chart-tab-{i}"),
+                                            dbc.Tab(label="Code", tab_id=f"code-tab-{i}")
                                         ],
-                                        id={'type': 'code-content', 'index': i},
-                                        style={'display': 'none'}
-                                        )
+                                        id={'type': 'tabs', 'index': i},
+                                        active_tab=f"chart-tab-{i}"),
+                                    ),
+                                    dbc.CardBody([
+                                        html.Div([
+                                            # Chart tab content
+                                            html.Div(
+                                                dcc.Graph(
+                                                    id={'type': 'viz', 'index': i},
+                                                    figure=fig,
+                                                    config={'displayModeBar': False}
+                                                ),
+                                                id={'type': 'chart-content', 'index': i},
+                                                style={'display': 'block'}
+                                            ),
+                                            # Code tab content
+                                            html.Div([
+                                                html.Pre(
+                                                    code,
+                                                    style={
+                                                        'backgroundColor': COLORS['background'],
+                                                        'padding': '1rem',
+                                                        'borderRadius': '5px',
+                                                        'whiteSpace': 'pre-wrap',
+                                                        'fontSize': '0.8rem'
+                                                    }
+                                                ),
+                                                dbc.Button(
+                                                    "Copy Code",
+                                                    id={'type': 'copy-btn', 'index': i},
+                                                    color="primary",
+                                                    size="sm",
+                                                    className="mt-2"
+                                                )
+                                            ],
+                                            id={'type': 'code-content', 'index': i},
+                                            style={'display': 'none'}
+                                            )
+                                        ])
                                     ])
-                                ])
-                            ], className="mb-4")
-                        ], width=12) for i, (fig, code) in enumerate(figures.values())
+                                ], className="mb-4")
+                            ], xs=12, md=6) for i, (fig, code) in enumerate(figures.values())
+                        ]
                     ])
                 ])
             ], className='mb-4'),
@@ -728,49 +900,52 @@ def analyze_data(set_progress, n_clicks, json_data, provider, api_key, model, vi
                 # Key Insights Section
                 dbc.Card([
                     dbc.CardHeader(
-                        html.H3("Key Insights", className="mb-0")
+                        html.H3("Key Insights (experimental)", className="mb-0")
                     ),
                     dbc.CardBody(
-                        html.Pre(
-                            summary,
-                            style={
-                                'whiteSpace': 'pre-wrap',
-                                'backgroundColor': COLORS['background'],
-                                'padding': '1rem',
-                                'borderRadius': '5px',
-                                'fontFamily': 'inherit'
-                            }
-                        )
+                        dash_dangerously_set_inner_html.DangerouslySetInnerHTML(
+                            markdown2.markdown(
+                                summary,
+                                extras=['tables', 'break-on-newline', 'cuddled-lists']
+                            )
+                        ),
+                        style={
+                            'backgroundColor': COLORS['background'],
+                            'padding': '1rem',
+                            'borderRadius': '5px',
+                        }
                     )
                 ], className='mb-4'),
                 
                 # Dataset Analysis Section
                 dbc.Card([
                     dbc.CardHeader(
-                        html.H3("Dataset Analysis", className="mb-0")
+                        html.H3("Dataset Analysis (experimental)", className="mb-0")
                     ),
                     dbc.CardBody(
-                        html.Pre(
-                            analysis,
-                            style={
-                                'whiteSpace': 'pre-wrap',
-                                'backgroundColor': COLORS['background'],
-                                'padding': '1rem',
-                                'borderRadius': '5px'
-                            }
-                        )
+                        dash_dangerously_set_inner_html.DangerouslySetInnerHTML(
+                            markdown2.markdown(
+                                analysis,
+                                extras=['tables', 'break-on-newline', 'cuddled-lists']
+                            )
+                        ),
+                        style={
+                            'backgroundColor': COLORS['background'],
+                            'padding': '1rem',
+                            'borderRadius': '5px'
+                        }
                     )
                 ])
             ])
         
-        return html.Div(components)
+        return html.Div(components), True  # Return True to indicate dashboard is rendered
         
     except Exception as e:
         logger.error(f"Analysis error: {str(e)}", exc_info=True)
         return html.Div(
             f"Error during analysis: {str(e)}", 
             style={'color': COLORS['error'], 'padding': '1rem'}
-        )
+        ), False  # Return False to indicate dashboard failed to render
 
 # Fix the tab switching callback
 @app.callback(
@@ -779,7 +954,19 @@ def analyze_data(set_progress, n_clicks, json_data, provider, api_key, model, vi
     Input({'type': 'tabs', 'index': MATCH}, 'active_tab'),
     prevent_initial_call=True
 )
-def switch_tab(active_tab):
+def switch_tab(active_tab: str) -> tuple:
+    """
+    Switch between chart and code views in visualization tabs.
+    
+    Args:
+        active_tab (str): ID of the active tab
+        
+    Returns:
+        tuple: (
+            dict: Style for chart content,
+            dict: Style for code content
+        )
+    """
     if active_tab and 'chart-tab' in active_tab:
         return {'display': 'block'}, {'display': 'none'}
     return {'display': 'none'}, {'display': 'block'}
@@ -808,7 +995,20 @@ app.clientside_callback(
      Input('change-file-button', 'n_clicks')],
     prevent_initial_call=True
 )
-def toggle_preview_visibility(viz_active, change_clicks):
+def toggle_preview_visibility(viz_active: bool, change_clicks: int) -> dict:
+    """
+    Toggle visibility of the data preview section.
+    
+    Args:
+        viz_active (bool): Whether visualizations are currently active
+        change_clicks (int): Number of clicks on change file button
+        
+    Returns:
+        dict: CSS style for preview section
+        
+    Raises:
+        PreventUpdate: If no trigger
+    """
     ctx = dash.callback_context
     if not ctx.triggered:
         raise PreventUpdate
@@ -822,6 +1022,25 @@ def toggle_preview_visibility(viz_active, change_clicks):
     
     return dash.no_update
 
+# Add a callback to update the button text
+@app.callback(
+    Output('analyze-button', 'children'),
+    Input('dashboard-rendered', 'data')
+)
+def update_button_text(dashboard_rendered: bool) -> str:
+    """
+    Update the analyze button text based on dashboard state.
+    
+    Args:
+        dashboard_rendered (bool): Whether a dashboard is currently rendered
+        
+    Returns:
+        str: Button text
+    """
+    if dashboard_rendered:
+        return 'Regenerate Dashboard'
+    return 'Analyze Data'
+
 if __name__ == '__main__':
     app.run_server(
         debug=False,
@@ -831,3 +1050,4 @@ if __name__ == '__main__':
         dev_tools_ui=False,
         dev_tools_props_check=False
     )
+
