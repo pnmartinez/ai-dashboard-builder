@@ -6,39 +6,37 @@ It handles the web interface, data processing, and visualization generation usin
 various LLM providers.
 """
 
-import pandas as pd
-from dash import Dash, html, dcc, Input, Output, State, no_update, long_callback, MATCH, ALL
-import dash
-from llm_pipeline import LLMPipeline
-from dashboard_builder import DashboardBuilder
-import base64
+# --- 1. IMPORTS ---
+# Standard library imports
+import os
 import io
 import json
 import logging
+import glob
+import base64
+import re
+from datetime import datetime
+from typing import Dict, List, Tuple, Any, Optional
+
+# Third-party imports
+import dash
+from dash import Dash, html, dcc, Input, Output, State, no_update, long_callback, MATCH, ALL
 import dash_bootstrap_components as dbc
+import dash_dangerously_set_inner_html
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import markdown2
+from dotenv import load_dotenv
 from dash.exceptions import PreventUpdate
 from dash.long_callback import DiskcacheLongCallbackManager
 import diskcache
-import os
-from io import BytesIO
-import glob
-from datetime import datetime
-from dotenv import load_dotenv
-import dash_dangerously_set_inner_html
-import markdown2
-import plotly.graph_objects as go
-import numpy as np
-import re
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger('Dashboard')
-logging.getLogger('werkzeug').setLevel(logging.WARNING)
+# Local imports
+from llm_pipeline import LLMPipeline
+from dashboard_builder import DashboardBuilder
 
-# Setup diskcache
-cache = diskcache.Cache("./cache")
-long_callback_manager = DiskcacheLongCallbackManager(cache)
-
+# --- 2. CONSTANTS ---
 # Color Palette - Salmon theme
 COLORS = {
     'background': "#FFF5F5",
@@ -54,40 +52,29 @@ COLORS = {
     'info': "#85A3FF"
 }
 
-# Add these constants near the top of the file, after COLORS
-MAX_PREVIEW_ROWS = 1000  # Default maximum rows to show in preview
-MAX_PREVIEW_COLS = 100    # Default maximum columns to show in preview
+# Data preview limits
+MAX_PREVIEW_ROWS = 1000
+MAX_PREVIEW_COLS = 100
 
-# Define the base directory for the application
+# Base directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# --- 3. CONFIGURATION ---
 # Load environment variables
 load_dotenv()
 
-# Function to get the appropriate API key based on model
-def get_api_key(model_name: str) -> str:
-    """
-    Get the appropriate API key based on the model name.
-    
-    Args:
-        model_name (str): Name of the LLM model (e.g., 'gpt', 'claude', 'mistral')
-        
-    Returns:
-        str: API key for the specified model, or empty string if not found
-    """
-    if 'gpt' in model_name:
-        return os.getenv('OPENAI_API_KEY', '')
-    elif 'claude' in model_name:
-        return os.getenv('ANTHROPIC_API_KEY', '')
-    elif 'mistral' in model_name:
-        return os.getenv('MISTRAL_API_KEY', '')
-    elif 'mixtral' in model_name or 'groq' in model_name or 'llama' in model_name or 'gemma' in model_name:
-        return os.getenv('GROQ_API_KEY', '')
-    return ''
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('Dashboard')
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
-# Initialize app with long callback manager and title
+# Setup diskcache
+cache = diskcache.Cache("./cache")
+long_callback_manager = DiskcacheLongCallbackManager(cache)
+
+# --- 4. APP INITIALIZATION ---
 app = Dash(
-    __name__, 
+    __name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
     suppress_callback_exceptions=False,
     update_title=None,
@@ -95,17 +82,117 @@ app = Dash(
     title="AI Dashboard Builder"
 )
 
-# Set the title for the browser tab
-app.title = "AI Dashboard Builder"
-# Modify the layout for responsive design
+# --- 5. UTILITY FUNCTIONS ---
+def get_api_key(model_name: str) -> str:
+    """Get the appropriate API key based on the model name."""
+    key_mapping = {
+        'gpt': 'OPENAI_API_KEY',
+        'claude': 'ANTHROPIC_API_KEY',
+        'mistral': 'MISTRAL_API_KEY',
+        'mixtral': 'GROQ_API_KEY',
+        'groq': 'GROQ_API_KEY',
+        'llama': 'GROQ_API_KEY',
+        'gemma': 'GROQ_API_KEY'
+    }
+    
+    for model_type, env_key in key_mapping.items():
+        if model_type in model_name.lower():
+            return os.getenv(env_key, '')
+    return ''
+
+def smart_numeric_conversion(df: pd.DataFrame) -> pd.DataFrame:
+    """Intelligently convert string columns to numeric types where possible."""
+    def clean_numeric_string(s: Any) -> Any:
+        if pd.isna(s):
+            return s
+        if not isinstance(s, str):
+            return s
+            
+        s = str(s).strip()
+        s = re.sub(r'[($€£¥,)]', '', s)
+        
+        if s.startswith('(') and s.endswith(')'):
+            s = '-' + s[1:-1]
+            
+        if s.endswith('%'):
+            try:
+                return float(s.rstrip('%')) / 100
+            except:
+                return s
+                
+        multipliers = {'K': 1000, 'M': 1000000, 'B': 1000000000}
+        if s and s[-1].upper() in multipliers:
+            try:
+                return float(s[:-1]) * multipliers[s[-1].upper()]
+            except:
+                return s
+                
+        return s
+
+    def try_numeric_conversion(series: pd.Series) -> pd.Series:
+        cleaned = series.map(clean_numeric_string)
+        try:
+            numeric = pd.to_numeric(cleaned, errors='coerce')
+            na_ratio = numeric.isna().sum() / len(numeric)
+            if na_ratio < 0.3:
+                return numeric
+        except:
+            pass
+        return series
+
+    df_converted = df.copy()
+    for col in df.columns:
+        if np.issubdtype(df[col].dtype, np.number):
+            continue
+            
+        try:
+            pd.to_datetime(df[col], errors='raise')
+            continue
+        except:
+            pass
+            
+        df_converted[col] = try_numeric_conversion(df[col])
+
+    return df_converted
+
+def apply_filters(df: pd.DataFrame, filter_state: Dict) -> pd.DataFrame:
+    """Apply filters to the dataframe."""
+    if not filter_state:
+        return df
+        
+    filtered_df = df.copy()
+    
+    temporal_filter = filter_state.get('temporal', {})
+    if temporal_filter.get('start_date') and temporal_filter.get('end_date'):
+        for col in df.columns:
+            try:
+                filtered_df[col] = pd.to_datetime(filtered_df[col])
+                filtered_df = filtered_df[
+                    (filtered_df[col] >= temporal_filter['start_date']) &
+                    (filtered_df[col] <= temporal_filter['end_date'])
+                ]
+                break
+            except:
+                continue
+    
+    categorical_filters = filter_state.get('categorical', {})
+    for col, values in categorical_filters.items():
+        if values:
+            filtered_df = filtered_df[filtered_df[col].astype(str).isin(values)]
+    
+    return filtered_df
+
+# --- 6. LAYOUT ---
 app.layout = html.Div([
+    # Data stores
     dcc.Store(id='data-store', storage_type='memory'),
     dcc.Store(id='viz-state', storage_type='memory'),
     dcc.Store(id='dashboard-rendered', storage_type='memory'),
-    dcc.Store(id='filter-state', storage_type='memory'),  # For storing filter state
+    dcc.Store(id='filter-state', storage_type='memory'),
     
     # Main container
     dbc.Container(fluid=True, children=[
+        # Header
         html.A(
             html.H1('AI Dashboard Builder',
                 style={
@@ -120,7 +207,7 @@ app.layout = html.Div([
             style={'textDecoration': 'none'}
         ),
         
-        # Controls Row - Horizontal bar at the top
+        # Controls Section
         dbc.Card([
             dbc.CardBody([
                 dbc.Row([
@@ -189,9 +276,9 @@ app.layout = html.Div([
                         html.Div(id='upload-status', className="mt-2"),
                     ], xs=12, md=5),
                     
-                    # Analyze Button Column
+                    # Analysis Controls Column
                     dbc.Col([
-                        html.H5("\u00A0", className="mb-2"),  # Invisible header for alignment
+                        html.H5("\u00A0", className="mb-2"),
                         dbc.Button(
                             'Analyze Data',
                             id='analyze-button',
@@ -218,21 +305,21 @@ app.layout = html.Div([
             ])
         ], className="mb-4"),
         
-        # Results Section with Sidebar and Content
+        # Results Section
         dbc.Row([
-            # Collapsible Sidebar - Make it narrower and add margin
+            # Filters Sidebar
             dbc.Col([
                 dbc.Collapse(
                     dbc.Card([
                         dbc.CardHeader("Inferred Data Filters"),
                         dbc.CardBody(id='filter-controls')
-                    ], className="sticky-top"),  # Make filters stick while scrolling
+                    ], className="sticky-top"),
                     id="sidebar-collapse",
                     is_open=False,
                 ),
-            ], width=2, style={'paddingRight': '20px'}),  # Reduced width and added right padding
+            ], width=2, style={'paddingRight': '20px'}),
             
-            # Main Content - Give it more space
+            # Main Content
             dbc.Col([
                 dbc.Spinner(
                     html.Div(
@@ -243,12 +330,13 @@ app.layout = html.Div([
                     type='border',
                     fullscreen=False,
                 )
-            ], width=10)  # Increased width
-        ], className="g-0")  # Remove default gutters
+            ], width=10)
+        ], className="g-0")
     ])
 ], style={'backgroundColor': COLORS['background'], 'minHeight': '100vh'})
 
-# Callback to toggle API key and model selection visibility
+# --- 7. CALLBACKS ---
+# Provider and API Key Management
 @app.callback(
     [Output('api-key-collapse', 'is_open'),
      Output('model-selection-collapse', 'is_open'),
@@ -258,111 +346,16 @@ app.layout = html.Div([
      Input('model-selection', 'value')]
 )
 def toggle_api_key(provider: str, model: str) -> tuple:
-    """
-    Toggle visibility and populate API key input based on provider selection.
-    
-    Args:
-        provider (str): Selected provider ('local' or 'external')
-        model (str): Selected model name
-        
-    Returns:
-        tuple: (
-            bool: Whether to show API key input,
-            bool: Whether to show model selection,
-            str: API key value if available,
-            str: Placeholder text for API key input
-        )
-    """
+    """Toggle visibility and populate API key input based on provider selection."""
     if provider != 'external':
         return False, False, '', 'Enter API Key'
     
     api_key = get_api_key(model)
     if api_key:
         return True, True, api_key, 'API KEY loaded'
-    else:
-        return True, True, '', 'Enter API Key'
+    return True, True, '', 'Enter API Key'
 
-# Add this helper function after the imports and before the app initialization
-def smart_numeric_conversion(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Intelligently convert string columns to numeric types where possible.
-    Handles various number formats, currencies, percentages, and is fault-tolerant.
-    
-    Args:
-        df (pd.DataFrame): Input dataframe
-        
-    Returns:
-        pd.DataFrame: Dataframe with converted numeric columns
-    """
-    def clean_numeric_string(s):
-        if pd.isna(s):
-            return s
-        if not isinstance(s, str):
-            return s
-            
-        # Remove currency symbols, parentheses for negative numbers, and other common characters
-        s = str(s).strip()
-        s = re.sub(r'[($€£¥,)]', '', s)
-        
-        # Handle parentheses negative numbers e.g., "(123)" -> "-123"
-        if s.startswith('(') and s.endswith(')'):
-            s = '-' + s[1:-1]
-            
-        # Handle percentages
-        if s.endswith('%'):
-            try:
-                return float(s.rstrip('%')) / 100
-            except:
-                return s
-                
-        # Handle thousands/millions/billions indicators
-        multipliers = {'K': 1000, 'M': 1000000, 'B': 1000000000}
-        if s and s[-1].upper() in multipliers:
-            try:
-                return float(s[:-1]) * multipliers[s[-1].upper()]
-            except:
-                return s
-                
-        return s
-
-    def try_numeric_conversion(series):
-        # First clean the strings
-        cleaned = series.map(clean_numeric_string)
-        
-        # Try converting to numeric
-        try:
-            numeric = pd.to_numeric(cleaned, errors='coerce')
-            # Only convert if we don't lose too many values
-            na_ratio = numeric.isna().sum() / len(numeric)
-            if na_ratio < 0.3:  # Allow up to 30% NaN values
-                return numeric
-        except:
-            pass
-        
-        return series
-
-    # Process each column
-    df_converted = df.copy()
-    for col in df.columns:
-        # Skip if already numeric
-        if np.issubdtype(df[col].dtype, np.number):
-            continue
-            
-        # Skip if datetime
-        try:
-            pd.to_datetime(df[col], errors='raise')
-            continue
-        except:
-            pass
-            
-        # Try converting to numeric
-        df_converted[col] = try_numeric_conversion(df[col])
-
-    logger.info(f"Completed smart numeric conversion: {df_converted.head()}")
-        
-    return df_converted
-
-# Modify the file upload callback
+# File Upload and Preview
 @app.callback(
     [Output('data-store', 'data'),
      Output('upload-status', 'children'),
@@ -373,45 +366,24 @@ def smart_numeric_conversion(df: pd.DataFrame) -> pd.DataFrame:
      State('upload-data', 'style')],
     prevent_initial_call=True
 )
-def handle_upload(contents, filename, current_style):
-    """
-    Process uploaded data file and prepare it for analysis.
-    
-    Handles CSV and Excel file uploads, creates a preview table,
-    and stores the data for analysis.
-    
-    Args:
-        contents (str): Base64 encoded file contents
-        filename (str): Name of uploaded file
-        current_style (dict): Current upload component style
-        
-    Returns:
-        tuple: (
-            str: JSON string of stored data,
-            html.Div: Upload status and preview components,
-            bool: Whether analyze button should be enabled,
-            dict: Updated upload component style
-        )
-        
-    Raises:
-        Exception: If file reading or processing fails
-    """
+def handle_upload(contents: str, filename: str, current_style: Dict) -> Tuple:
+    """Process uploaded data file and prepare it for analysis."""
     if contents is None:
         return no_update, no_update, True, current_style
     
     try:
+        # File processing logic here
         content_type, content_string = contents.split(',')
         decoded = base64.b64decode(content_string)
         
-        # Check file extension
+        # Check file extension and read file
         file_extension = filename.lower().split('.')[-1]
         if file_extension not in ['csv', 'xlsx', 'xls']:
             return None, html.Div('Please upload a CSV or Excel file', style={'color': COLORS['error']}), True, current_style
             
-        # Read the file based on its extension
         if file_extension == 'csv':
             df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
-        else:  # Excel files
+        else:
             df = pd.read_excel(BytesIO(decoded))
             
         if df.empty:
@@ -420,7 +392,7 @@ def handle_upload(contents, filename, current_style):
         # Apply smart numeric conversion
         df = smart_numeric_conversion(df)
         
-        # Create preview controls with max values by default
+        # Create preview controls
         preview_controls = dbc.Row([
             dbc.Col([
                 html.Label("Limit Rows:", className="me-2"),
@@ -440,7 +412,7 @@ def handle_upload(contents, filename, current_style):
                     type='number',
                     min=1,
                     max=len(df.columns),
-                    value=len(df.columns),  # Show all columns by default
+                    value=len(df.columns),
                     style={'width': '100px'}
                 ),
             ], width='auto'),
@@ -455,8 +427,8 @@ def handle_upload(contents, filename, current_style):
             ], width='auto'),
         ], className="mb-3 align-items-center")
 
-        # Create initial preview table with limited rows
-        preview_df = df.head(10)  # Only show first 10 rows
+        # Create initial preview table
+        preview_df = df.head(10)
         preview_table = dbc.Table.from_dataframe(
             preview_df,
             striped=True,
@@ -466,32 +438,32 @@ def handle_upload(contents, filename, current_style):
             style={'backgroundColor': 'white'}
         )
             
-        # Store the full dataframe but with initial preview limits and filename
+        # Store data
         data_store = {
             'full_data': df.to_json(date_format='iso', orient='split'),
-            'row_limit': 10,  # Initial limit of 10 rows
-            'col_limit': len(df.columns),  # Show all columns initially
-            'filename': filename  # Add filename to data store
+            'row_limit': 10,
+            'col_limit': len(df.columns),
+            'filename': filename
         }
         
-        # Hide the upload component after successful upload
+        # Hide upload component
         hidden_style = {**current_style, 'display': 'none'}
 
         # Add import viz specs button
         import_button = html.Div([
             dbc.Button(
                 [
-                    html.I(className="fas fa-file-import me-2"),  # Font Awesome import icon
+                    html.I(className="fas fa-file-import me-2"),
                     "Import Previous Viz Specs"
                 ],
                 id='import-viz-specs-button',
-                color="link",  # Makes it look like a link
-                className="p-0",  # Remove padding
+                color="link",
+                className="p-0",
                 style={
-                    'color': '#6c757d',  # Muted color
-                    'fontSize': '0.8rem',  # Smaller text
-                    'textDecoration': 'none',  # No underline
-                    'opacity': '0.7'  # Slightly faded
+                    'color': '#6c757d',
+                    'fontSize': '0.8rem',
+                    'textDecoration': 'none',
+                    'opacity': '0.7'
                 }
             ),
             dbc.Tooltip(
@@ -499,9 +471,7 @@ def handle_upload(contents, filename, current_style):
                 target='import-viz-specs-button',
                 placement='right'
             ),
-            # Hidden div to store available viz specs files
             html.Div(id='viz-specs-list', style={'display': 'none'}),
-            # Modal for selecting viz specs file
             dbc.Modal(
                 [
                     dbc.ModalHeader("Select Visualization Specifications"),
@@ -518,7 +488,6 @@ def handle_upload(contents, filename, current_style):
         return (
             json.dumps(data_store),
             html.Div([
-                # File info and buttons (always visible)
                 html.Div([
                     html.Div(f'Loaded: {filename}', style={'color': COLORS['info']}),
                     html.Button(
@@ -530,7 +499,6 @@ def handle_upload(contents, filename, current_style):
                     import_button
                 ], id='file-info-container'),
                 
-                # Preview section (can be hidden)
                 html.Div([
                     html.H6("Data Preview:", className="mt-3"),
                     preview_controls,
@@ -565,7 +533,7 @@ def handle_upload(contents, filename, current_style):
         logger.error(f"Upload error: {str(e)}", exc_info=True)
         return None, html.Div(f'Error: {str(e)}', style={'color': COLORS['error']}), True, current_style
 
-# Modify the update preview callback to also update the stored limits
+# Preview Table Updates
 @app.callback(
     [Output('preview-table-container', 'children'),
      Output('data-store', 'data', allow_duplicate=True)],
@@ -575,25 +543,8 @@ def handle_upload(contents, filename, current_style):
      State('data-store', 'data')],
     prevent_initial_call=True
 )
-def update_preview(n_clicks, rows, cols, json_data):
-    """
-    Update the data preview based on user-specified row and column limits.
-    
-    Args:
-        n_clicks (int): Number of update button clicks
-        rows (int): Number of rows to show
-        cols (int): Number of columns to show
-        json_data (str): Current data store JSON string
-        
-    Returns:
-        tuple: (
-            list: Updated preview table components,
-            str: Updated data store JSON with new limits
-        )
-        
-    Raises:
-        PreventUpdate: If button not clicked or no data
-    """
+def update_preview(n_clicks: int, rows: int, cols: int, json_data: str) -> Tuple[List, str]:
+    """Update the data preview based on user-specified row and column limits."""
     if not n_clicks or not json_data:
         raise PreventUpdate
         
@@ -601,15 +552,12 @@ def update_preview(n_clicks, rows, cols, json_data):
         data_store = json.loads(json_data)
         df = pd.read_json(io.StringIO(data_store['full_data']), orient='split')
         
-        # Ensure valid values
         rows = max(1, min(rows, len(df))) if rows else 10
         cols = max(1, min(cols, len(df.columns))) if cols else 10
         
-        # Update the stored limits
         data_store['row_limit'] = rows
         data_store['col_limit'] = cols
         
-        # Create preview with specified limits
         preview_df = df.head(rows).iloc[:, :cols]
         preview_table = dbc.Table.from_dataframe(
             preview_df,
@@ -629,32 +577,32 @@ def update_preview(n_clicks, rows, cols, json_data):
                     style={'color': COLORS['text_secondary']}
                 )
             ],
-            json.dumps(data_store)  # Update stored limits
+            json.dumps(data_store)
         ]
         
     except Exception as e:
-        logger.error(f"Preview update error: {str(e)}", exc_info=True)
+        logger.error(f"Preview update error: {str(e)}")
         return html.Div(f'Error updating preview: {str(e)}', style={'color': COLORS['error']}), no_update
 
-# Add callback for the change file button
+# File Change Management
 @app.callback(
     [Output('upload-data', 'style', allow_duplicate=True),
      Output('data-store', 'data', allow_duplicate=True),
      Output('upload-status', 'children', allow_duplicate=True),
      Output('analyze-button', 'disabled', allow_duplicate=True),
-     Output('viz-state', 'data', allow_duplicate=True)],  # Add this output
+     Output('viz-state', 'data', allow_duplicate=True)],
     Input('change-file-button', 'n_clicks'),
     State('upload-data', 'style'),
     prevent_initial_call=True
 )
-def change_file(n_clicks, current_style):
+def change_file(n_clicks: int, current_style: Dict) -> Tuple:
+    """Handle file change request."""
     if n_clicks:
-        # Show the upload component again
         visible_style = {**current_style, 'display': 'block'}
-        return visible_style, None, '', True, None  # Reset viz-state to None
+        return visible_style, None, '', True, None
     return no_update, no_update, no_update, no_update, no_update
 
-# Add callbacks for the viz specs import functionality
+# Visualization Specs Import
 @app.callback(
     [Output('viz-specs-modal', 'is_open'),
      Output('viz-specs-modal-content', 'children')],
@@ -663,10 +611,9 @@ def change_file(n_clicks, current_style):
     [State('viz-specs-modal', 'is_open')],
     prevent_initial_call=True
 )
-def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
-    """
-    Toggle and populate the visualization specifications import modal.
-    """
+def toggle_viz_specs_modal(import_clicks: Optional[int], close_clicks: Optional[int], 
+                         is_open: bool) -> Tuple[bool, Optional[html.Div]]:
+    """Toggle and populate the visualization specifications import modal."""
     ctx = dash.callback_context
     if not ctx.triggered:
         return False, None
@@ -674,50 +621,41 @@ def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
     button_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     if button_id == 'import-viz-specs-button':
-        # Use absolute path for viz specs directory
         viz_specs_dir = os.path.join(BASE_DIR, 'llm_responses')
         viz_specs_files = glob.glob(os.path.join(viz_specs_dir, 'viz_specs_*.json'))
         
         if not viz_specs_files:
             return True, html.Div("No visualization specifications found", className="text-muted")
         
-        # Create list of files with metadata
         file_list = []
         for file_path in viz_specs_files:
             try:
                 with open(file_path, 'r') as f:
                     specs = json.load(f)
-                    # Parse timestamp to datetime for sorting
                     timestamp_str = specs.get('timestamp', 'Unknown')
                     try:
                         timestamp = datetime.strptime(timestamp_str, "%Y%m%d_%H%M%S")
                         formatted_timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
                     except:
                         formatted_timestamp = timestamp_str
-                        timestamp = datetime.min  # For sorting purposes
-                    
-                    model = specs.get('model', 'Unknown')
-                    provider = specs.get('provider', 'Unknown')
-                    dataset_filename = specs.get('dataset_filename', 'Unknown dataset')  # Get dataset filename
+                        timestamp = datetime.min
                     
                     file_list.append({
                         'path': file_path,
-                        'timestamp': timestamp,  # For sorting
+                        'timestamp': timestamp,
                         'display_data': {
                             'timestamp': formatted_timestamp,
-                            'model': model,
-                            'provider': provider,
-                            'dataset_filename': dataset_filename  # Add dataset filename to display data
+                            'model': specs.get('model', 'Unknown'),
+                            'provider': specs.get('provider', 'Unknown'),
+                            'dataset_filename': specs.get('dataset_filename', 'Unknown dataset')
                         }
                     })
             except Exception as e:
                 logger.error(f"Error reading viz specs file {file_path}: {str(e)}")
                 continue
         
-        # Sort by timestamp, most recent first
         file_list.sort(key=lambda x: x['timestamp'], reverse=True)
         
-        # Create list items with dataset filename
         list_items = [
             dbc.ListGroupItem(
                 [
@@ -727,7 +665,7 @@ def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
                             html.Small([
                                 f"Model: {item['display_data']['model']} ({item['display_data']['provider']})",
                                 html.Br(),
-                                f"For dataset: {item['display_data']['dataset_filename']}"  # Add dataset filename
+                                f"For dataset: {item['display_data']['dataset_filename']}"
                             ], className="text-muted")
                         ]
                     ),
@@ -747,90 +685,43 @@ def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
     
     return False, None
 
-# Modify the use_viz_specs callback to include ctx
+# Visualization Specs Usage
 @app.callback(
     [Output('data-store', 'data', allow_duplicate=True),
      Output('analyze-button', 'n_clicks', allow_duplicate=True),
      Output('viz-specs-modal', 'is_open', allow_duplicate=True),
-     Output('viz-state', 'data')],  # Add this output
+     Output('viz-state', 'data')],
     Input({'type': 'use-viz-specs', 'index': ALL}, 'n_clicks'),
     [State('data-store', 'data'),
      State('analyze-button', 'n_clicks')],
     prevent_initial_call=True
 )
-def use_viz_specs(n_clicks, current_data, current_clicks):
-    """
-    Import and apply previously saved visualization specifications.
-    
-    Args:
-        n_clicks (list): List of click counts for each import button
-        current_data (str): Current data store JSON string
-        current_clicks (int): Current analyze button click count
-        
-    Returns:
-        tuple: (
-            str: Updated data store JSON,
-            int: Incremented analyze button clicks,
-            bool: Whether to close the modal,
-            bool: Whether visualizations are active
-        )
-        
-    Raises:
-        PreventUpdate: If no import button was clicked
-    """
+def use_viz_specs(n_clicks: List[Optional[int]], current_data: str, 
+                 current_clicks: Optional[int]) -> Tuple:
+    """Import and apply previously saved visualization specifications."""
     ctx = dash.callback_context
     if not any(n_clicks):
         raise PreventUpdate
         
     try:
-        # Get the triggered input info
         triggered = ctx.triggered[0]
-        logger.info(f"Full triggered object: {triggered}")
-        
-        # Extract the file path from the triggered input ID and ensure it has .json extension
         file_path = eval(triggered['prop_id'].split('.')[0]+'"}')['index']
         if not file_path.endswith('.json'):
             file_path = f"{file_path}.json"
-        logger.info(f"File path with extension: {file_path}")
         
-        # Verify file exists using absolute path
         if not os.path.isabs(file_path):
             file_path = os.path.join(BASE_DIR, file_path)
         
         if not os.path.exists(file_path):
             logger.error(f"File not found: {file_path}")
-            # Try to list existing files in the directory for debugging
-            dir_path = os.path.dirname(file_path)
-            if os.path.exists(dir_path):
-                existing_files = os.listdir(dir_path)
-                logger.info(f"Files in directory {dir_path}: {existing_files}")
             raise FileNotFoundError(f"Visualization specs file not found: {file_path}")
         
-        # Load the selected viz specs
         with open(file_path, 'r') as f:
             viz_specs = json.load(f)
-        logger.info(f"Successfully loaded viz specs from {file_path}")
         
-        # Update the data store with the imported viz specs
         current_data = json.loads(current_data)
         current_data['imported_viz_specs'] = viz_specs['visualization_specs']
         
-        # Create minimal upload status without preview
-        upload_status = html.Div([
-            html.Div(
-                "Dataset loaded and visualization specs imported",
-                style={'color': COLORS['info']}
-            ),
-            html.Button(
-                'Change File',
-                id='change-file-button',
-                className='mt-2 mb-3 btn btn-outline-secondary btn-sm',
-                n_clicks=0
-            )
-        ])
-        
-        # Return updated data store, increment analyze button clicks, close modal, and update upload status
-        logger.info("Returning updated data store and incrementing clicks")
         return json.dumps(current_data), (current_clicks or 0) + 1, False, True
         
     except Exception as e:
@@ -838,7 +729,7 @@ def use_viz_specs(n_clicks, current_data, current_clicks):
         logger.error("Full traceback:", exc_info=True)
         raise PreventUpdate
 
-# Modify the analyze_data callback to include KPI information
+# Data Analysis Pipeline
 @app.long_callback(
     [Output('results-container', 'children'),
      Output('dashboard-rendered', 'data'),
@@ -849,7 +740,7 @@ def use_viz_specs(n_clicks, current_data, current_clicks):
      State('api-key-input', 'value'),
      State('model-selection', 'value'),
      State('viz-only-checkbox', 'value'),
-     State('kpi-selector', 'value')],  # Add KPI selector state
+     State('kpi-selector', 'value')],
     prevent_initial_call=True,
     running=[
         (Output('analyze-button', 'disabled'), True, False),
@@ -857,214 +748,154 @@ def use_viz_specs(n_clicks, current_data, current_clicks):
         (Output('llm-provider', 'disabled'), True, False),
         (Output('api-key-input', 'disabled'), True, False),
         (Output('model-selection', 'disabled'), True, False),
-        (Output('kpi-selector', 'disabled'), True, False),  # Add KPI selector to disabled states
+        (Output('kpi-selector', 'disabled'), True, False),
     ],
     progress=[Output('upload-status', 'children')],
 )
-def analyze_data(set_progress, n_clicks, json_data, provider, input_api_key, model, viz_only, kpis):
-    """
-    Process the uploaded dataset and generate visualizations and analysis.
-    
-    This function handles the main data analysis pipeline:
-    1. Dataset analysis (if not viz_only)
-    2. Visualization suggestion generation
-    3. Dashboard creation
-    4. Insights summary (if not viz_only)
-    
-    Args:
-        set_progress: Callback to update progress status
-        n_clicks (int): Number of button clicks
-        json_data (str): JSON string containing dataset and metadata
-        provider (str): Selected LLM provider ('local' or 'external')
-        input_api_key (str): User-provided API key
-        model (str): Selected model name
-        viz_only (bool): Whether to skip analysis and only generate visualizations
-        kpis (list): List of selected KPI columns
-        
-    Returns:
-        tuple: (
-            html.Div: Dashboard components,
-            bool: Whether dashboard was successfully rendered
-        )
-        
-    Raises:
-        PreventUpdate: If no clicks or no data
-        ValueError: If API key is missing for external provider
-    """
+def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str, 
+                input_api_key: str, model: str, viz_only: bool, 
+                kpis: List[str]) -> Tuple[html.Div, bool, str]:
+    """Process the uploaded dataset and generate visualizations and analysis."""
     if not n_clicks or not json_data:
         raise PreventUpdate
     
     try:
-        # Get API key from environment if available, otherwise use input
         api_key = get_api_key(model) or input_api_key
         
         data_store = json.loads(json_data)
         df_full = pd.read_json(io.StringIO(data_store['full_data']), orient='split')
-        filename = data_store.get('filename', 'unknown_file')  # Get filename from data store
+        filename = data_store.get('filename', 'unknown_file')
         
-        # Apply the stored limits to create the analysis dataset
         df = df_full.head(data_store['row_limit']).iloc[:, :data_store['col_limit']]
-        
-        # Check if we have imported viz specs
         imported_viz_specs = data_store.get('imported_viz_specs')
         
         if imported_viz_specs:
-            set_progress(html.Div("Using imported visualization specifications...", style={'color': COLORS['info']}))
+            set_progress(html.Div("Using imported visualization specifications...", 
+                                style={'color': COLORS['info']}))
             viz_specs = imported_viz_specs
             dashboard_builder = DashboardBuilder(df, COLORS)
             figures = dashboard_builder.create_all_figures(viz_specs)
             
-            # Set dummy values for analysis and summary since we're using imported specs
             analysis = "Analysis skipped - using imported visualization specifications"
             summary = "Summary skipped - using imported visualization specifications"
             
         else:
-            # Validate API key if using external provider
             if provider == 'external' and not api_key:
                 raise ValueError("API key is required for external provider")
             
-            set_progress(html.Div("Initializing analysis pipeline...", style={'color': COLORS['info']}))
+            set_progress(html.Div("Initializing analysis pipeline...", 
+                                style={'color': COLORS['info']}))
             
-            # Set up pipeline based on provider
             if provider == 'local':
                 pipeline = LLMPipeline(model_name="llama3.1", use_local=True)
             else:
-                # Set API key in environment
                 os.environ["LLM_API_KEY"] = api_key
                 pipeline = LLMPipeline(model_name=model, use_local=False)
             
-            # Skip analysis if viz_only is True
             if not viz_only:
-                set_progress(html.Div("1/5 Analyzing dataset... (Rate limiting in effect)", style={'color': COLORS['info']}))
-                analysis = pipeline.analyze_dataset(df, kpis)  # Pass KPIs
+                set_progress(html.Div("1/5 Analyzing dataset... (Rate limiting in effect)", 
+                                    style={'color': COLORS['info']}))
+                analysis = pipeline.analyze_dataset(df, kpis)
             else:
                 analysis = "Analysis skipped - visualizations only mode"
             
-            set_progress(html.Div("2/5 Generating visualization suggestions... (Rate limiting in effect)", style={'color': COLORS['info']}))
-            viz_specs = pipeline.suggest_visualizations(df, kpis, filename=filename)  # Pass filename to suggest_visualizations
+            set_progress(html.Div("2/5 Generating visualization suggestions... (Rate limiting in effect)", 
+                                style={'color': COLORS['info']}))
+            viz_specs = pipeline.suggest_visualizations(df, kpis, filename=filename)
             
-            # Store the viz specs in data_store
             data_store['visualization_specs'] = viz_specs
             
-            set_progress(html.Div("3/5 Creating visualizations...", style={'color': COLORS['info']}))
+            set_progress(html.Div("3/5 Creating visualizations...", 
+                                style={'color': COLORS['info']}))
             dashboard_builder = DashboardBuilder(df, COLORS)
             figures = dashboard_builder.create_all_figures(viz_specs)
             
-            # Skip summary if viz_only is True
             if not viz_only:
-                set_progress(html.Div("4/5 Generating insights summary... (Rate limiting in effect)", style={'color': COLORS['info']}))
+                set_progress(html.Div("4/5 Generating insights summary... (Rate limiting in effect)", 
+                                    style={'color': COLORS['info']}))
                 summary = pipeline.summarize_analysis(analysis, viz_specs)
             else:
                 summary = "Summary skipped - visualizations only mode"
         
-        set_progress(html.Div("5/5 Rendering dashboard...", style={'color': COLORS['info']}))
+        set_progress(html.Div("5/5 Rendering dashboard...", 
+                            style={'color': COLORS['info']}))
         
         components = [
-            # Visualizations Section (First)
             dbc.Card([
-                dbc.CardHeader(
-                    html.H3("Dashboard", className="mb-0")
-                ),
+                dbc.CardHeader(html.H3("Dashboard", className="mb-0")),
                 dbc.CardBody([
                     dbc.Row([
-                        # Create pairs of visualizations for two-column layout
-                        *[
-                            dbc.Col([
-                                # Tabs for visualization
-                                dbc.Card([
-                                    dbc.CardHeader(
-                                        dbc.Tabs([
-                                            dbc.Tab(label="Chart", tab_id=f"chart-tab-{i}"),
-                                            dbc.Tab(label="Code", tab_id=f"code-tab-{i}")
-                                        ],
-                                        id={'type': 'tabs', 'index': i},
-                                        active_tab=f"chart-tab-{i}"),
-                                    ),
-                                    dbc.CardBody([
-                                        html.Div([
-                                            # Chart tab content
-                                            html.Div(
-                                                dcc.Graph(
-                                                    id={'type': 'viz', 'index': i},
-                                                    figure=fig,
-                                                    config={'displayModeBar': False}
-                                                ),
-                                                id={'type': 'chart-content', 'index': i},
-                                                style={'display': 'block'}
+                        dbc.Col([
+                            dbc.Card([
+                                dbc.CardHeader(
+                                    dbc.Tabs([
+                                        dbc.Tab(label="Chart", tab_id=f"chart-tab-{i}"),
+                                        dbc.Tab(label="Code", tab_id=f"code-tab-{i}")
+                                    ],
+                                    id={'type': 'tabs', 'index': i},
+                                    active_tab=f"chart-tab-{i}"),
+                                ),
+                                dbc.CardBody([
+                                    html.Div([
+                                        html.Div(
+                                            dcc.Graph(
+                                                id={'type': 'viz', 'index': i},
+                                                figure=fig,
+                                                config={'displayModeBar': False}
                                             ),
-                                            # Code tab content
-                                            html.Div([
-                                                html.Pre(
-                                                    code,
-                                                    style={
-                                                        'backgroundColor': COLORS['background'],
-                                                        'padding': '1rem',
-                                                        'borderRadius': '5px',
-                                                        'whiteSpace': 'pre-wrap',
-                                                        'fontSize': '0.8rem'
-                                                    }
-                                                ),
-                                                dbc.Button(
-                                                    "Copy Code",
-                                                    id={'type': 'copy-btn', 'index': i},
-                                                    color="primary",
-                                                    size="sm",
-                                                    className="mt-2"
-                                                )
-                                            ],
-                                            id={'type': 'code-content', 'index': i},
-                                            style={'display': 'none'}
+                                            id={'type': 'chart-content', 'index': i},
+                                            style={'display': 'block'}
+                                        ),
+                                        html.Div([
+                                            html.Pre(
+                                                code,
+                                                style={
+                                                    'backgroundColor': COLORS['background'],
+                                                    'padding': '1rem',
+                                                    'borderRadius': '5px',
+                                                    'whiteSpace': 'pre-wrap',
+                                                    'fontSize': '0.8rem'
+                                                }
+                                            ),
+                                            dbc.Button(
+                                                "Copy Code",
+                                                id={'type': 'copy-btn', 'index': i},
+                                                color="primary",
+                                                size="sm",
+                                                className="mt-2"
                                             )
-                                        ])
+                                        ],
+                                        id={'type': 'code-content', 'index': i},
+                                        style={'display': 'none'}
+                                        )
                                     ])
-                                ], className="mb-4")
-                            ], xs=12, md=6) for i, (fig, code) in enumerate(figures.values())
-                        ]
+                                ])
+                            ], className="mb-4")
+                        ], xs=12, md=6) for i, (fig, code) in enumerate(figures.values())
                     ])
                 ])
             ], className='mb-4'),
         ]
         
-        # Only add Key Insights and Dataset Analysis if not viz_only
         if not viz_only and not imported_viz_specs:
             components.extend([
-                # Key Insights Section
                 dbc.Card([
-                    dbc.CardHeader(
-                        html.H3("Key Insights (experimental)", className="mb-0")
-                    ),
+                    dbc.CardHeader(html.H3("Key Insights (experimental)", className="mb-0")),
                     dbc.CardBody(
                         dash_dangerously_set_inner_html.DangerouslySetInnerHTML(
-                            markdown2.markdown(
-                                summary,
-                                extras=['tables', 'break-on-newline', 'cuddled-lists']
-                            )
+                            markdown2.markdown(summary, extras=['tables', 'break-on-newline', 'cuddled-lists'])
                         ),
-                        style={
-                            'backgroundColor': COLORS['background'],
-                            'padding': '1rem',
-                            'borderRadius': '5px',
-                        }
+                        style={'backgroundColor': COLORS['background'], 'padding': '1rem', 'borderRadius': '5px'}
                     )
                 ], className='mb-4'),
                 
-                # Dataset Analysis Section
                 dbc.Card([
-                    dbc.CardHeader(
-                        html.H3("Dataset Analysis (experimental)", className="mb-0")
-                    ),
+                    dbc.CardHeader(html.H3("Dataset Analysis (experimental)", className="mb-0")),
                     dbc.CardBody(
                         dash_dangerously_set_inner_html.DangerouslySetInnerHTML(
-                            markdown2.markdown(
-                                analysis,
-                                extras=['tables', 'break-on-newline', 'cuddled-lists']
-                            )
+                            markdown2.markdown(analysis, extras=['tables', 'break-on-newline', 'cuddled-lists'])
                         ),
-                        style={
-                            'backgroundColor': COLORS['background'],
-                            'padding': '1rem',
-                            'borderRadius': '5px'
-                        }
+                        style={'backgroundColor': COLORS['background'], 'padding': '1rem', 'borderRadius': '5px'}
                     )
                 ])
             ])
@@ -1073,41 +904,27 @@ def analyze_data(set_progress, n_clicks, json_data, provider, input_api_key, mod
         
     except Exception as e:
         logger.error(f"Analysis error: {str(e)}")
-        return html.Div(
-            f"Error during analysis: {str(e)}", 
-            style={'color': COLORS['error'], 'padding': '1rem'}
-        ), False, json_data  # Return original data_store on error
+        return html.Div(f"Error during analysis: {str(e)}", 
+                       style={'color': COLORS['error'], 'padding': '1rem'}), False, json_data
 
-# Fix the tab switching callback
+# Tab Switching
 @app.callback(
     [Output({'type': 'chart-content', 'index': MATCH}, 'style'),
      Output({'type': 'code-content', 'index': MATCH}, 'style')],
     Input({'type': 'tabs', 'index': MATCH}, 'active_tab'),
     prevent_initial_call=True
 )
-def switch_tab(active_tab: str) -> tuple:
-    """
-    Switch between chart and code views in visualization tabs.
-    
-    Args:
-        active_tab (str): ID of the active tab
-        
-    Returns:
-        tuple: (
-            dict: Style for chart content,
-            dict: Style for code content
-        )
-    """
+def switch_tab(active_tab: str) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Switch between chart and code views in visualization tabs."""
     if active_tab and 'chart-tab' in active_tab:
         return {'display': 'block'}, {'display': 'none'}
     return {'display': 'none'}, {'display': 'block'}
 
-# Add callback for code copying
+# Code Copying (Client-side callback)
 app.clientside_callback(
     """
     function(n_clicks, code_content) {
         if (n_clicks) {
-            // Extract the code from the Pre component
             const code = code_content.props.children;
             navigator.clipboard.writeText(code);
             return "Copied!";
@@ -1121,27 +938,15 @@ app.clientside_callback(
     prevent_initial_call=True
 )
 
-# Modify the preview visibility callback to only target the preview section
+# Preview Visibility
 @app.callback(
     Output('preview-section', 'style'),
     [Input('viz-state', 'data'),
      Input('change-file-button', 'n_clicks')],
     prevent_initial_call=True
 )
-def toggle_preview_visibility(viz_active: bool, change_clicks: int) -> dict:
-    """
-    Toggle visibility of the data preview section.
-    
-    Args:
-        viz_active (bool): Whether visualizations are currently active
-        change_clicks (int): Number of clicks on change file button
-        
-    Returns:
-        dict: CSS style for preview section
-        
-    Raises:
-        PreventUpdate: If no trigger
-    """
+def toggle_preview_visibility(viz_active: bool, change_clicks: int) -> Dict[str, str]:
+    """Toggle visibility of the data preview section."""
     ctx = dash.callback_context
     if not ctx.triggered:
         raise PreventUpdate
@@ -1155,26 +960,16 @@ def toggle_preview_visibility(viz_active: bool, change_clicks: int) -> dict:
     
     return dash.no_update
 
-# Add a callback to update the button text
+# Button Text Update
 @app.callback(
     Output('analyze-button', 'children'),
     Input('dashboard-rendered', 'data')
 )
 def update_button_text(dashboard_rendered: bool) -> str:
-    """
-    Update the analyze button text based on dashboard state.
-    
-    Args:
-        dashboard_rendered (bool): Whether a dashboard is currently rendered
-        
-    Returns:
-        str: Button text
-    """
-    if dashboard_rendered:
-        return 'Regenerate Dashboard'
-    return 'Analyze Data'
+    """Update the analyze button text based on dashboard state."""
+    return 'Regenerate Dashboard' if dashboard_rendered else 'Analyze Data'
 
-# Add callback to create filter controls when dashboard is rendered
+# Filter Controls Creation
 @app.callback(
     [Output('filter-controls', 'children'),
      Output('sidebar-collapse', 'is_open')],
@@ -1182,30 +977,25 @@ def update_button_text(dashboard_rendered: bool) -> str:
      Input('data-store', 'data')],
     prevent_initial_call=True
 )
-def create_filter_controls(dashboard_rendered, json_data):
-    """
-    Create filter controls based on the dataset columns.
-    """
+def create_filter_controls(dashboard_rendered: bool, json_data: str) -> Tuple[List, bool]:
+    """Create filter controls based on the dataset columns."""
     if not dashboard_rendered or not json_data:
         return [], False
         
     try:
-        # Load the dataset
         data_store = json.loads(json_data)
         df = pd.read_json(io.StringIO(data_store['full_data']), orient='split')
         
         filters = []
+        temporal_col = None
         
         # Find temporal column
-        temporal_col = None
         for col in df.columns:
             try:
-                # Convert to datetime and check if conversion was successful
                 temp_series = pd.to_datetime(df[col], errors='coerce')
-                # Only consider as temporal if we have valid dates (not all NaT)
                 if not temp_series.isna().all():
                     temporal_col = col
-                    df[col] = temp_series  # Keep the converted dates
+                    df[col] = temp_series
                     break
             except:
                 continue
@@ -1216,7 +1006,6 @@ def create_filter_controls(dashboard_rendered, json_data):
             max_date = df[temporal_col].max()
             
             if pd.notna(min_date) and pd.notna(max_date):
-                # Convert timestamps to strings for DatePickerRange
                 min_date_str = min_date.strftime('%Y-%m-%d')
                 max_date_str = max_date.strftime('%Y-%m-%d')
                 
@@ -1233,30 +1022,26 @@ def create_filter_controls(dashboard_rendered, json_data):
                 ])
         
         # Add categorical filters
-        categorical_cols = []
-        for col in df.columns:
-            if col != temporal_col:
-                n_unique = df[col].nunique()
-                if n_unique is not None and len(df) > 0:
-                    if n_unique / len(df) < 0.05:  # Less than 5% unique values
-                        categorical_cols.append(col)
+        categorical_cols = [
+            col for col in df.columns 
+            if col != temporal_col and df[col].nunique() / len(df) < 0.05
+        ]
         
         for col in categorical_cols:
             unique_values = sorted(df[col].dropna().unique())
-            if len(unique_values) > 0:  # Only add filter if we have values
+            if len(unique_values) > 0:
                 filters.extend([
                     html.H6(f"{col}", className="mt-3"),
                     dcc.Dropdown(
                         id={'type': 'category-filter', 'column': col},
                         options=[{'label': str(val), 'value': str(val)} for val in unique_values],
-                        value=[],  # Default to no selection (show all)
+                        value=[],
                         multi=True,
                         placeholder=f"Select {col}...",
                         className="mb-3"
                     )
                 ])
         
-        # Add reset button if we have any filters
         if filters:
             filters.append(
                 dbc.Button(
@@ -1268,9 +1053,7 @@ def create_filter_controls(dashboard_rendered, json_data):
                 )
             )
             
-            # Wrap all filters in a div with padding
-            filters = html.Div(filters, style={'padding': '10px'})
-            return filters, True
+            return html.Div(filters, style={'padding': '10px'}), True
         
         return [], False
         
@@ -1278,7 +1061,7 @@ def create_filter_controls(dashboard_rendered, json_data):
         logger.error(f"Error creating filters: {str(e)}")
         return [], False
 
-# Add callback to apply filters
+# Filter State Management
 @app.callback(
     Output('filter-state', 'data'),
     [Input('date-range-filter', 'start_date'),
@@ -1288,22 +1071,16 @@ def create_filter_controls(dashboard_rendered, json_data):
      Input('reset-filters-button', 'n_clicks')],
     prevent_initial_call=True
 )
-def update_filter_state(start_date, end_date, category_values, category_ids, reset_clicks):
-    """
-    Update the filter state based on user selections.
-    
-    Returns:
-        dict: Current state of all filters
-    """
+def update_filter_state(start_date: str, end_date: str, category_values: List, 
+                       category_ids: List, reset_clicks: int) -> Optional[Dict]:
+    """Update the filter state based on user selections."""
     ctx = dash.callback_context
     if not ctx.triggered:
         raise PreventUpdate
         
-    # Handle reset
     if ctx.triggered[0]['prop_id'] == 'reset-filters-button.n_clicks':
         return None
         
-    # Create filter state
     filter_state = {
         'temporal': {
             'start_date': start_date,
@@ -1311,52 +1088,13 @@ def update_filter_state(start_date, end_date, category_values, category_ids, res
         },
         'categorical': {
             id['column']: values for id, values in zip(category_ids, category_values)
-            if values  # Only include filters with selected values
+            if values
         }
     }
     
     return filter_state
 
-# Modify the existing callbacks to apply filters
-def apply_filters(df: pd.DataFrame, filter_state: dict) -> pd.DataFrame:
-    """
-    Apply filters to the dataframe.
-    
-    Args:
-        df (pd.DataFrame): Original dataframe
-        filter_state (dict): Current filter state
-        
-    Returns:
-        pd.DataFrame: Filtered dataframe
-    """
-    if not filter_state:
-        return df
-        
-    filtered_df = df.copy()
-    
-    # Apply temporal filter
-    temporal_filter = filter_state.get('temporal', {})
-    if temporal_filter.get('start_date') and temporal_filter.get('end_date'):
-        for col in df.columns:
-            try:
-                filtered_df[col] = pd.to_datetime(filtered_df[col])
-                filtered_df = filtered_df[
-                    (filtered_df[col] >= temporal_filter['start_date']) &
-                    (filtered_df[col] <= temporal_filter['end_date'])
-                ]
-                break
-            except:
-                continue
-    
-    # Apply categorical filters
-    categorical_filters = filter_state.get('categorical', {})
-    for col, values in categorical_filters.items():
-        if values:  # Only apply filter if values are selected
-            filtered_df = filtered_df[filtered_df[col].astype(str).isin(values)]
-    
-    return filtered_df
-
-# Modify the callback to update visualizations based on filters
+# Visualization Updates
 @app.callback(
     [Output({'type': 'viz', 'index': ALL}, 'figure'),
      Output('date-range-filter', 'start_date'),
@@ -1369,46 +1107,32 @@ def apply_filters(df: pd.DataFrame, filter_state: dict) -> pd.DataFrame:
      State({'type': 'category-filter', 'column': ALL}, 'id')],
     prevent_initial_call=True
 )
-def update_visualizations(reset_clicks, filter_state, json_data, current_figures, category_ids):
-    """
-    Update all visualizations based on the current filter state.
-    """
+def update_visualizations(reset_clicks: int, filter_state: Dict, json_data: str, 
+                        current_figures: List, category_ids: List) -> Tuple:
+    """Update all visualizations based on the current filter state."""
     ctx = dash.callback_context
     if not ctx.triggered or not json_data:
         raise PreventUpdate
         
     try:
-        # Load the dataset and viz specs
         data_store = json.loads(json_data)
         df = pd.read_json(io.StringIO(data_store['full_data']), orient='split')
         
-        # Get viz specs from the correct location in data_store
-        viz_specs = None
-        if 'imported_viz_specs' in data_store:
-            viz_specs = data_store['imported_viz_specs']
-        elif 'visualization_specs' in data_store:
-            viz_specs = data_store['visualization_specs']
-            
+        viz_specs = data_store.get('imported_viz_specs') or data_store.get('visualization_specs')
         if not viz_specs:
             logger.warning("No visualization specifications found in data store")
             return current_figures, None, None, [[] for _ in category_ids]
         
-        # If reset button clicked, reset all filters and recreate figures with original data
         if ctx.triggered[0]['prop_id'] == 'reset-filters-button.n_clicks':
             logger.info("Resetting all filters")
             dashboard_builder = DashboardBuilder(df, COLORS)
             figures = dashboard_builder.create_all_figures(viz_specs)
             
-            # Ensure we have the same number of figures as current_figures
-            new_figures = []
-            for i in range(len(current_figures)):
-                if i < len(figures):
-                    fig, _ = list(figures.values())[i]
-                    new_figures.append(fig)
-                else:
-                    new_figures.append(current_figures[i])
+            new_figures = [
+                list(figures.values())[i][0] if i < len(figures) else current_figures[i]
+                for i in range(len(current_figures))
+            ]
             
-            # Find temporal column and its min/max dates
             temporal_col = None
             min_date = None
             max_date = None
@@ -1424,92 +1148,55 @@ def update_visualizations(reset_clicks, filter_state, json_data, current_figures
                 except:
                     continue
             
-            # Return reset state
             return new_figures, min_date, max_date, [[] for _ in category_ids]
         
-        # Handle normal filter updates
         if filter_state:
-            filtered_df = df.copy()
-            # Apply temporal filter
-            temporal_filter = filter_state.get('temporal', {})
-            if temporal_filter.get('start_date') and temporal_filter.get('end_date'):
-                for col in df.columns:
-                    try:
-                        filtered_df[col] = pd.to_datetime(filtered_df[col], errors='coerce')
-                        if not filtered_df[col].isna().all():
-                            filtered_df = filtered_df[
-                                (filtered_df[col] >= temporal_filter['start_date']) &
-                                (filtered_df[col] <= temporal_filter['end_date'])
-                            ]
-                            logger.info(f"Applied temporal filter on column {col}")
-                            break
-                    except Exception as e:
-                        logger.debug(f"Could not convert column {col} to datetime: {str(e)}")
-                        continue
+            filtered_df = apply_filters(df, filter_state)
             
-            # Apply categorical filters
-            categorical_filters = filter_state.get('categorical', {})
-            for col, values in categorical_filters.items():
-                if values:  # Only apply filter if values are selected
-                    filtered_df = filtered_df[filtered_df[col].astype(str).isin(values)]
-                    logger.info(f"Applied categorical filter on column {col}")
-            
-            # Create new figures with filtered data
             dashboard_builder = DashboardBuilder(filtered_df, COLORS)
             figures = dashboard_builder.create_all_figures(viz_specs)
             
-            # Ensure we have the same number of figures as current_figures
-            new_figures = []
-            for i in range(len(current_figures)):
-                if i < len(figures):
-                    fig, _ = list(figures.values())[i]
-                    new_figures.append(fig)
-                else:
-                    new_figures.append(current_figures[i])
+            new_figures = [
+                list(figures.values())[i][0] if i < len(figures) else current_figures[i]
+                for i in range(len(current_figures))
+            ]
             
             logger.info(f"Created {len(new_figures)} new figures with filtered data")
             
-            # Return filtered state
             return (
                 new_figures,
-                temporal_filter.get('start_date'),
-                temporal_filter.get('end_date'),
-                [categorical_filters.get(cat_id['column'], []) for cat_id in category_ids]
+                filter_state['temporal'].get('start_date'),
+                filter_state['temporal'].get('end_date'),
+                [filter_state['categorical'].get(cat_id['column'], []) for cat_id in category_ids]
             )
         
-        # Return current state if no filters
         return current_figures, None, None, [[] for _ in category_ids]
         
     except Exception as e:
         logger.error(f"Error updating visualizations: {str(e)}")
-        # Return current state on error
         return current_figures, None, None, [[] for _ in category_ids]
 
-# Add callback to populate KPI selector when data is loaded
+# KPI Selector Population
 @app.callback(
     Output('kpi-selector', 'options'),
     Input('data-store', 'data'),
     prevent_initial_call=True
 )
-def update_kpi_selector(json_data):
-    """
-    Update KPI selector options based on loaded dataset columns.
-    """
+def update_kpi_selector(json_data: str) -> List[Dict[str, str]]:
+    """Update KPI selector options based on loaded dataset columns."""
     if not json_data:
         return []
         
     try:
         data_store = json.loads(json_data)
         df = pd.read_json(io.StringIO(data_store['full_data']), orient='split')
-        
-        # Create options from column names
-        options = [{'label': col, 'value': col} for col in df.columns]
-        return options
+        return [{'label': col, 'value': col} for col in df.columns]
         
     except Exception as e:
         logger.error(f"Error updating KPI selector: {str(e)}")
         return []
 
+# --- 8. MAIN EXECUTION ---
 if __name__ == '__main__':
     app.run_server(
         debug=False,
