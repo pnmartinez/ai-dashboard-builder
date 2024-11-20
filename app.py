@@ -56,7 +56,7 @@ COLORS = {
 
 # Add these constants near the top of the file, after COLORS
 MAX_PREVIEW_ROWS = 1000  # Default maximum rows to show in preview
-MAX_PREVIEW_COLS = 20    # Default maximum columns to show in preview
+MAX_PREVIEW_COLS = 100    # Default maximum columns to show in preview
 
 # Define the base directory for the application
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -429,7 +429,7 @@ def handle_upload(contents, filename, current_style):
                     type='number',
                     min=1,
                     max=len(df),
-                    value=len(df),  # Default to 10 rows
+                    value=len(df),
                     style={'width': '100px'}
                 ),
             ], width='auto'),
