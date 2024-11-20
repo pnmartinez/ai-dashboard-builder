@@ -466,11 +466,12 @@ def handle_upload(contents, filename, current_style):
             style={'backgroundColor': 'white'}
         )
             
-        # Store the full dataframe but with initial preview limits
+        # Store the full dataframe but with initial preview limits and filename
         data_store = {
             'full_data': df.to_json(date_format='iso', orient='split'),
             'row_limit': 10,  # Initial limit of 10 rows
-            'col_limit': len(df.columns)  # Show all columns initially
+            'col_limit': len(df.columns),  # Show all columns initially
+            'filename': filename  # Add filename to data store
         }
         
         # Hide the upload component after successful upload
@@ -665,21 +666,6 @@ def change_file(n_clicks, current_style):
 def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
     """
     Toggle and populate the visualization specifications import modal.
-    
-    Args:
-        import_clicks (int): Number of clicks on import button
-        close_clicks (int): Number of clicks on close button
-        is_open (bool): Current modal state
-        
-    Returns:
-        tuple: (
-            bool: Whether modal should be open,
-            html.Div: Modal content if opening
-        )
-        
-    Note:
-        When opening, scans for and lists available visualization specification files
-        sorted by most recent first.
     """
     ctx = dash.callback_context
     if not ctx.triggered:
@@ -712,6 +698,7 @@ def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
                     
                     model = specs.get('model', 'Unknown')
                     provider = specs.get('provider', 'Unknown')
+                    dataset_filename = specs.get('dataset_filename', 'Unknown dataset')  # Get dataset filename
                     
                     file_list.append({
                         'path': file_path,
@@ -719,7 +706,8 @@ def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
                         'display_data': {
                             'timestamp': formatted_timestamp,
                             'model': model,
-                            'provider': provider
+                            'provider': provider,
+                            'dataset_filename': dataset_filename  # Add dataset filename to display data
                         }
                     })
             except Exception as e:
@@ -729,17 +717,18 @@ def toggle_viz_specs_modal(import_clicks, close_clicks, is_open):
         # Sort by timestamp, most recent first
         file_list.sort(key=lambda x: x['timestamp'], reverse=True)
         
-        # Create list items
+        # Create list items with dataset filename
         list_items = [
             dbc.ListGroupItem(
                 [
                     html.Div(
                         [
                             html.H6(f"Generated: {item['display_data']['timestamp']}", className="mb-1"),
-                            html.Small(
-                                f"Model: {item['display_data']['model']} ({item['display_data']['provider']})", 
-                                className="text-muted"
-                            )
+                            html.Small([
+                                f"Model: {item['display_data']['model']} ({item['display_data']['provider']})",
+                                html.Br(),
+                                f"For dataset: {item['display_data']['dataset_filename']}"  # Add dataset filename
+                            ], className="text-muted")
                         ]
                     ),
                     dbc.Button(
@@ -911,6 +900,7 @@ def analyze_data(set_progress, n_clicks, json_data, provider, input_api_key, mod
         
         data_store = json.loads(json_data)
         df_full = pd.read_json(io.StringIO(data_store['full_data']), orient='split')
+        filename = data_store.get('filename', 'unknown_file')  # Get filename from data store
         
         # Apply the stored limits to create the analysis dataset
         df = df_full.head(data_store['row_limit']).iloc[:, :data_store['col_limit']]
@@ -951,7 +941,7 @@ def analyze_data(set_progress, n_clicks, json_data, provider, input_api_key, mod
                 analysis = "Analysis skipped - visualizations only mode"
             
             set_progress(html.Div("2/5 Generating visualization suggestions... (Rate limiting in effect)", style={'color': COLORS['info']}))
-            viz_specs = pipeline.suggest_visualizations(df, kpis)  # Pass KPIs
+            viz_specs = pipeline.suggest_visualizations(df, kpis, filename=filename)  # Pass filename to suggest_visualizations
             
             # Store the viz specs in data_store
             data_store['visualization_specs'] = viz_specs

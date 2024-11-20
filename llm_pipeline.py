@@ -628,13 +628,14 @@ Please provide a comprehensive analysis following this exact structure, using th
             
         return self._time_execution("analyze_dataset", _analyze, df)
 
-    def suggest_visualizations(self, df: pd.DataFrame, kpis: Optional[list] = None) -> Dict[str, Any]:
+    def suggest_visualizations(self, df: pd.DataFrame, kpis: Optional[list] = None, filename: str = 'unknown_file') -> Dict[str, Any]:
         """
         Generate visualization suggestions for the dataset using LLM.
         
         Args:
             df (pd.DataFrame): Dataset to visualize
             kpis (list, optional): List of KPI columns to focus on
+            filename (str): Name of the original data file
         """
         def _suggest(df: pd.DataFrame):
             logger.info("Starting visualization suggestions process")
@@ -878,9 +879,8 @@ Example response format:
                     
                     validated_specs[viz_id] = cleaned_spec
 
-                # Save visualization specifications with model name in filename
+                # Save visualization specifications with model name and filename in the metadata
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                # Clean model name for filename (remove special characters)
                 clean_model_name = re.sub(r'[^\w\-]', '_', self.model_name)
                 viz_specs_file = os.path.join(self.responses_dir, f"viz_specs_{clean_model_name}_{timestamp}.json")
                 
@@ -890,6 +890,7 @@ Example response format:
                             "timestamp": timestamp,
                             "model": self.model_name,
                             "provider": "local" if self.use_local else "api",
+                            "dataset_filename": filename,  # Add filename to metadata
                             "column_metadata": column_metadata,
                             "visualization_specs": validated_specs
                         }, f, indent=2, ensure_ascii=False)
