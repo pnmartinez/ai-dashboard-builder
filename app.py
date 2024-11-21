@@ -10,6 +10,7 @@ various LLM providers.
 # Standard library imports
 import os
 import io
+from io import BytesIO
 import json
 import logging
 import glob
