@@ -42,9 +42,9 @@ from dashboard_builder import DashboardBuilder
 COLORS = {
     'background': '#FFF9F0',      # Lightest - Main page background
     'surface': '#FFF4E2',         # Medium - Card backgrounds
-    'plot_container': '#FFF2DE',  # Darker - Plot container background (adjusted)
-    'plot_surface': '#FFF4E2',    # Plot surface background
-    'grid': '#FFE4C4',           # Darker grid color (adjusted)
+    'plot_container': '#FFF6ED',  # Lighter - Plot container background (barely beige)
+    'plot_surface': '#FFFBF5',    # Plot surface background - Light beige-white
+    'grid': '#E9ECEF',            # Subtle gray grid that doesn't compete with data
     'primary': '#ff5200',         # Vibrant orange
     'primary_light': '#E9540D',   # Lighter orange
     'primary_dark': '#b60505',    # Dark red
@@ -53,7 +53,7 @@ COLORS = {
     'warning': '#ffc107',         # Amber
     'error': '#ff2525',           # Red
     'success': '#4caf50',         # Green
-    'info': '#3A507C',           # Navy blue
+    'info': '#3A507C',            # Navy blue
     'text_primary': '#00234c',    # Dark navy text
     'text_secondary': '#2f4968',  # Lighter navy text
     'divider': '#FFF9F0',        # Light beige divider

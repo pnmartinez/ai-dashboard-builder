@@ -352,7 +352,7 @@ class DashboardBuilder:
                     'font': {
                         'family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
                         'color': self.colors['text_primary'],
-                        'size': 16
+                        'size': 18
                     },
                     'text': title,
                     'x': 0.5,
