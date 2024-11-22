@@ -38,19 +38,26 @@ from llm_pipeline import LLMPipeline
 from dashboard_builder import DashboardBuilder
 
 # --- 2. CONSTANTS ---
-# Color Palette - Salmon theme
+# Color Palette - Based on matplotlib style with additional shades
 COLORS = {
-    'background': "#FFF5F5",
-    'card': "#FFF0F0",
-    'divider': "#FFD7D7",
-    'primary': "#FF9999",
-    'secondary': "#FF7777",
-    'warning': "#FFB366",
-    'error': "#FF6B6B",
-    'text_primary': "#4A4A4A",
-    'text_secondary': "#717171",
-    'highlight': "#FF8585",
-    'info': "#85A3FF"
+    'background': '#FFF9F0',      # Lightest - Main page background
+    'surface': '#FFF4E2',         # Medium - Card backgrounds
+    'plot_container': '#FFF2DE',  # Darker - Plot container background (adjusted)
+    'plot_surface': '#FFF4E2',    # Plot surface background
+    'grid': '#FFE4C4',           # Darker grid color (adjusted)
+    'primary': '#ff5200',         # Vibrant orange
+    'primary_light': '#E9540D',   # Lighter orange
+    'primary_dark': '#b60505',    # Dark red
+    'secondary': '#0095f1',       # Bright blue
+    'accent': '#15bf14',          # Green
+    'warning': '#ffc107',         # Amber
+    'error': '#ff2525',           # Red
+    'success': '#4caf50',         # Green
+    'info': '#3A507C',           # Navy blue
+    'text_primary': '#00234c',    # Dark navy text
+    'text_secondary': '#2f4968',  # Lighter navy text
+    'divider': '#FFF9F0',        # Light beige divider
+    'shadow': 'rgba(0, 35, 76, 0.1)' # Based on text_primary
 }
 
 # Data preview limits
@@ -193,20 +200,29 @@ app.layout = html.Div([
     
     # Main container
     dbc.Container(fluid=True, children=[
-        # Header
-        html.A(
-            html.H1('AI Dashboard Builder',
-                style={
-                    'textAlign': 'center',
-                    'color': COLORS['primary'],
-                    'marginBottom': '2rem',
-                    'paddingTop': '1rem',
-                    'textDecoration': 'none'
-                }
-            ),
-            href='/',
-            style={'textDecoration': 'none'}
-        ),
+        # Header with elevation
+        dbc.Card([
+            html.A(
+                html.H1('AI Dashboard Builder',
+                    style={
+                        'textAlign': 'center',
+                        'color': COLORS['primary'],
+                        'margin': '1rem 0',
+                        'fontWeight': '300',
+                        'letterSpacing': '0.5px'
+                    }
+                ),
+                href='/',
+                style={'textDecoration': 'none'}
+            )
+        ], 
+        className="mb-4",
+        style={
+            'backgroundColor': COLORS['surface'],
+            'borderRadius': '8px',
+            'boxShadow': f'0 2px 4px {COLORS["shadow"]}',
+            'border': 'none'
+        }),
         
         # Controls Section
         dbc.Card([
@@ -214,23 +230,37 @@ app.layout = html.Div([
                 dbc.Row([
                     # LLM Provider Column
                     dbc.Col([
-                        html.H5("LLM Provider", className="mb-2"),
+                        html.H5("LLM Provider", 
+                               className="mb-3",
+                               style={'fontWeight': '500', 'color': COLORS['text_primary']}),
                         dbc.RadioItems(
                             id='llm-provider',
                             options=[
-                                {'label': ['Local ', html.A('(Ollama)', href='https://ollama.com/download', target='_blank')], 'value': 'local'},
+                                {'label': ['Local ', html.A('(Ollama)', href='https://ollama.com/download', 
+                                                          target='_blank',
+                                                          style={'color': COLORS['primary']})], 
+                                 'value': 'local'},
                                 {'label': 'External API', 'value': 'external'}
                             ],
                             value='local',
-                            className="mb-2",
-                            inline=True
+                            className="mb-3",
+                            inline=True,
+                            style={
+                                'gap': '1rem',
+                                'color': COLORS['text_secondary']
+                            }
                         ),
                         dbc.Collapse(
                             dbc.Input(
                                 id='api-key-input',
                                 type='password',
                                 placeholder='Enter API Key',
-                                className="mb-2"
+                                className="mb-3",
+                                style={
+                                    'borderRadius': '4px',
+                                    'border': f'1px solid {COLORS["divider"]}',
+                                    'transition': 'border-color 0.15s ease-in-out'
+                                }
                             ),
                             id='api-key-collapse',
                             is_open=False
@@ -253,38 +283,60 @@ app.layout = html.Div([
                         ),
                     ], xs=12, md=4),
                     
-                    # File Upload Column
+                    # File Upload Column with modern styling
                     dbc.Col([
-                        html.H5("Dataset Upload", className="mb-2"),
+                        html.H5("Dataset Upload", 
+                               className="mb-3",
+                               style={'fontWeight': '500', 'color': COLORS['text_primary']}),
                         dcc.Upload(
                             id='upload-data',
                             children=html.Div([
-                                'Drag and Drop or ',
-                                html.A('Select a CSV/Excel File')
-                            ]),
+                                html.I(className="fas fa-cloud-upload-alt fa-2x mb-2",
+                                      style={'color': COLORS['primary']}),
+                                html.Div([
+                                    'Drag and Drop or ',
+                                    html.A('Select a File',
+                                          style={'color': COLORS['primary'],
+                                                'textDecoration': 'none',
+                                                'fontWeight': '500'})
+                                ])
+                            ], style={'textAlign': 'center'}),
                             style={
                                 'width': '100%',
-                                'height': '60px',
-                                'lineHeight': '60px',
-                                'borderWidth': '1px',
+                                'height': '120px',
+                                'lineHeight': '1.5',
+                                'borderWidth': '2px',
                                 'borderStyle': 'dashed',
-                                'borderRadius': '5px',
-                                'textAlign': 'center',
-                                'backgroundColor': COLORS['background']
+                                'borderRadius': '8px',
+                                'borderColor': COLORS['primary_light'],
+                                'backgroundColor': f'{COLORS["primary"]}08',
+                                'color': COLORS['text_secondary'],
+                                'display': 'flex',
+                                'alignItems': 'center',
+                                'justifyContent': 'center',
+                                'cursor': 'pointer',
+                                'transition': 'all 0.3s ease'
                             },
                             multiple=False
                         ),
-                        html.Div(id='upload-status', className="mt-2"),
+                        html.Div(id='upload-status', className="mt-3"),
                     ], xs=12, md=5),
                     
                     # Analysis Controls Column
                     dbc.Col([
-                        html.H5("\u00A0", className="mb-2"),
+                        html.H5("\u00A0", className="mb-3"),
                         dbc.Button(
                             'Analyze Data',
                             id='analyze-button',
                             color='primary',
-                            className='w-100 mt-2',
+                            className='w-100 mb-3',
+                            style={
+                                'borderRadius': '4px',
+                                'boxShadow': f'0 2px 4px {COLORS["shadow"]}',
+                                'fontWeight': '500',
+                                'textTransform': 'uppercase',
+                                'letterSpacing': '0.5px'
+                            },
                             disabled=True
                         ),
                         dcc.Dropdown(
@@ -301,10 +353,17 @@ app.layout = html.Div([
                             className="mt-2",
                             style={'color': '#6c757d'}
                         ),
-                    ], xs=12, md=3, className="d-flex align-items-end flex-column"),
+                    ], xs=12, md=3),
                 ])
             ])
-        ], className="mb-4"),
+        ],
+        style={
+            'backgroundColor': COLORS['surface'],
+            'borderRadius': '8px',
+            'boxShadow': f'0 2px 4px {COLORS["shadow"]}',
+            'border': 'none'
+        },
+        className="mb-4"),
         
         # Results Section
         dbc.Row([
@@ -312,13 +371,25 @@ app.layout = html.Div([
             dbc.Col([
                 dbc.Collapse(
                     dbc.Card([
-                        dbc.CardHeader("Inferred Data Filters"),
+                        dbc.CardHeader(
+                            html.H6("Inferred Data Filters",
+                                   className="mb-0",
+                                   style={'fontWeight': '500',
+                                         'color': COLORS['text_primary']})),
                         dbc.CardBody(id='filter-controls')
-                    ], className="sticky-top"),
+                    ],
+                    style={
+                        'backgroundColor': COLORS['surface'],
+                        'borderRadius': '8px',
+                        'boxShadow': f'0 2px 4px {COLORS["shadow"]}',
+                        'border': 'none',
+                        'position': 'sticky',
+                        'top': '1rem'
+                    }),
                     id="sidebar-collapse",
                     is_open=False,
                 ),
-            ], width=2, style={'paddingRight': '20px'}),
+            ], width=2),
             
             # Main Content
             dbc.Col([
@@ -327,9 +398,8 @@ app.layout = html.Div([
                         id='results-container',
                         style={'minHeight': '200px'}
                     ),
-                    color='primary',
-                    type='border',
-                    fullscreen=False,
+                    color=COLORS['primary'],
+                    spinner_style={'width': '3rem', 'height': '3rem'}
                 )
             ], width=10)
         ], className="g-0")
@@ -823,18 +893,54 @@ def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str,
         
         components = [
             dbc.Card([
-                dbc.CardHeader(html.H3("Dashboard", className="mb-0")),
+                dbc.CardHeader(
+                    html.H3("Dashboard", 
+                           className="mb-0",
+                           style={
+                               'color': COLORS['text_primary'],
+                               'fontWeight': '500',
+                               'fontSize': '1.5rem'
+                           }
+                    )
+                ),
                 dbc.CardBody([
                     dbc.Row([
                         dbc.Col([
                             dbc.Card([
                                 dbc.CardHeader(
                                     dbc.Tabs([
-                                        dbc.Tab(label="Chart", tab_id=f"chart-tab-{i}"),
-                                        dbc.Tab(label="Code", tab_id=f"code-tab-{i}")
+                                        dbc.Tab(
+                                            label="Chart", 
+                                            tab_id=f"chart-tab-{i}",
+                                            label_style={
+                                                'color': COLORS['text_primary']
+                                            },
+                                            active_label_style={
+                                                'backgroundColor': COLORS['background'],
+                                                'color': COLORS['primary']
+                                            }
+                                        ),
+                                        dbc.Tab(
+                                            label="Code", 
+                                            tab_id=f"code-tab-{i}",
+                                            label_style={
+                                                'color': COLORS['text_primary']
+                                            },
+                                            active_label_style={
+                                                'backgroundColor': COLORS['background'],
+                                                'color': COLORS['primary']
+                                            }
+                                        )
                                     ],
                                     id={'type': 'tabs', 'index': i},
-                                    active_tab=f"chart-tab-{i}"),
+                                    active_tab=f"chart-tab-{i}",
+                                    style={
+                                        'borderBottom': 'none'
+                                    }),
+                                    style={
+                                        'backgroundColor': COLORS['surface'],
+                                        'borderBottom': f'1px solid {COLORS["divider"]}'
+                                    }
                                 ),
                                 dbc.CardBody([
                                     html.Div([
@@ -845,7 +951,13 @@ def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str,
                                                 config={'displayModeBar': False}
                                             ),
                                             id={'type': 'chart-content', 'index': i},
-                                            style={'display': 'block'}
+                                            style={
+                                                'display': 'block',
+                                                'backgroundColor': COLORS['plot_container'],
+                                                'padding': '1rem',
+                                                'borderRadius': '5px',
+                                                'border': f'1px solid {COLORS["divider"]}'
+                                            }
                                         ),
                                         html.Div([
                                             html.Pre(
@@ -855,7 +967,9 @@ def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str,
                                                     'padding': '1rem',
                                                     'borderRadius': '5px',
                                                     'whiteSpace': 'pre-wrap',
-                                                    'fontSize': '0.8rem'
+                                                    'fontSize': '0.8rem',
+                                                    'color': COLORS['text_primary'],
+                                                    'border': f'1px solid {COLORS["divider"]}'
                                                 }
                                             ),
                                             dbc.Button(
@@ -863,50 +977,120 @@ def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str,
                                                 id={'type': 'copy-btn', 'index': i},
                                                 color="primary",
                                                 size="sm",
-                                                className="mt-2"
+                                                className="mt-2",
+                                                style={
+                                                    'backgroundColor': COLORS['primary'],
+                                                    'borderColor': COLORS['primary'],
+                                                    'boxShadow': f'0 2px 4px {COLORS["shadow"]}'
+                                                }
                                             )
                                         ],
                                         id={'type': 'code-content', 'index': i},
                                         style={'display': 'none'}
                                         )
                                     ])
-                                ])
-                            ], className="mb-4")
+                                ],
+                                style={'backgroundColor': COLORS['surface']})
+                            ],
+                            className="mb-4",
+                            style={
+                                'backgroundColor': COLORS['surface'],
+                                'borderRadius': '8px',
+                                'boxShadow': '0 4px 8px rgba(0, 35, 76, 0.15), 0 1px 3px rgba(0, 35, 76, 0.1)',
+                                'border': 'none',
+                                'transition': 'box-shadow 0.3s ease'
+                            })
                         ], xs=12, md=6) for i, (fig, code) in enumerate(figures.values())
                     ])
-                ])
-            ], className='mb-4'),
+                ],
+                style={'backgroundColor': COLORS['surface']})
+            ],
+            className='mb-4',
+            style={
+                'backgroundColor': COLORS['surface'],
+                'borderRadius': '8px',
+                'boxShadow': f'0 2px 4px {COLORS["shadow"]}',
+                'border': 'none'
+            })
         ]
         
         if not viz_only and not imported_viz_specs:
             components.extend([
                 dbc.Card([
-                    dbc.CardHeader(html.H3("Key Insights (experimental)", className="mb-0")),
+                    dbc.CardHeader(
+                        html.H3("Key Insights (experimental)",
+                               className="mb-0",
+                               style={
+                                   'color': COLORS['text_primary'],
+                                   'fontWeight': '500',
+                                   'fontSize': '1.5rem'
+                               })
+                    ),
                     dbc.CardBody(
                         dash_dangerously_set_inner_html.DangerouslySetInnerHTML(
                             markdown2.markdown(summary, extras=['tables', 'break-on-newline', 'cuddled-lists'])
                         ),
-                        style={'backgroundColor': COLORS['background'], 'padding': '1rem', 'borderRadius': '5px'}
+                        style={
+                            'backgroundColor': COLORS['surface'],
+                            'padding': '1rem',
+                            'borderRadius': '5px',
+                            'color': COLORS['text_primary']
+                        }
                     )
-                ], className='mb-4'),
+                ],
+                className='mb-4',
+                style={
+                    'backgroundColor': COLORS['surface'],
+                    'borderRadius': '8px',
+                    'boxShadow': f'0 2px 4px {COLORS["shadow"]}',
+                    'border': 'none'
+                }),
                 
                 dbc.Card([
-                    dbc.CardHeader(html.H3("Dataset Analysis (experimental)", className="mb-0")),
+                    dbc.CardHeader(
+                        html.H3("Dataset Analysis (experimental)",
+                               className="mb-0",
+                               style={
+                                   'color': COLORS['text_primary'],
+                                   'fontWeight': '500',
+                                   'fontSize': '1.5rem'
+                               })
+                    ),
                     dbc.CardBody(
                         dash_dangerously_set_inner_html.DangerouslySetInnerHTML(
                             markdown2.markdown(analysis, extras=['tables', 'break-on-newline', 'cuddled-lists'])
                         ),
-                        style={'backgroundColor': COLORS['background'], 'padding': '1rem', 'borderRadius': '5px'}
+                        style={
+                            'backgroundColor': COLORS['surface'],
+                            'padding': '1rem',
+                            'borderRadius': '5px',
+                            'color': COLORS['text_primary']
+                        }
                     )
-                ])
+                ],
+                style={
+                    'backgroundColor': COLORS['surface'],
+                    'borderRadius': '8px',
+                    'boxShadow': f'0 2px 4px {COLORS["shadow"]}',
+                    'border': 'none'
+                })
             ])
         
         return html.Div(components), True, json.dumps(data_store)
         
     except Exception as e:
         logger.error(f"Analysis error: {str(e)}")
-        return html.Div(f"Error during analysis: {str(e)}", 
-                       style={'color': COLORS['error'], 'padding': '1rem'}), False, json_data
+        return html.Div(
+            f"Error during analysis: {str(e)}", 
+            style={
+                'color': COLORS['error'],
+                'padding': '1rem',
+                'backgroundColor': COLORS['surface'],
+                'borderRadius': '8px',
+                'boxShadow': f'0 2px 4px {COLORS["shadow"]}',
+                'border': 'none'
+            }
+        ), False, json_data
 
 # Tab Switching
 @app.callback(

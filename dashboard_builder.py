@@ -53,30 +53,28 @@ class DashboardBuilder:
         try:
             viz_type = viz_spec.get('type', '').lower()
             
-            # Get basic parameters
+            # Get basic parameters and validate them
             x = viz_spec.get('x')
             y = viz_spec.get('y')
             color = viz_spec.get('color')
             title = viz_spec.get('title', 'Visualization')
             params = viz_spec.get('parameters', {})
             
-            # Validate column names and adjust parameters if needed
-            if x and x not in self.df.columns:
-                logger.warning(f"Column '{x}' not found in dataframe, skipping visualization")
-                raise ValueError(f"Column '{x}' not found in dataframe")
+            # Early validation of required columns
+            if not x or x not in self.df.columns:
+                logger.error(f"Required x column '{x}' not found in dataframe")
+                raise ValueError(f"Required x column '{x}' not found in dataframe")
             
             if y and y not in self.df.columns:
-                logger.warning(f"Column '{y}' not found in dataframe, skipping visualization")
-                raise ValueError(f"Column '{y}' not found in dataframe")
+                logger.error(f"Specified y column '{y}' not found in dataframe")
+                raise ValueError(f"Specified y column '{y}' not found in dataframe")
             
             # Handle size parameter for scatter plots
             if viz_type == 'scatter' and 'size' in params:
                 size_value = params['size']
                 if isinstance(size_value, (int, float)):
-                    # If size is a number, use it directly
                     size = size_value
                 elif isinstance(size_value, str) and size_value not in self.df.columns:
-                    # If size is a string but not a column name, remove it
                     logger.warning(f"Size column '{size_value}' not found, using default size")
                     size = None
                 else:
@@ -84,7 +82,8 @@ class DashboardBuilder:
             else:
                 size = None
             
-            # Create figure based on visualization type and generate corresponding code
+            # Generate sample data for code example only
+            sample_df = self.df.head()
             code_lines = [
                 "import plotly.express as px",
                 "import plotly.graph_objects as go",
@@ -92,17 +91,18 @@ class DashboardBuilder:
                 "",
                 "# Sample data preparation",
                 "df = pd.DataFrame({",
-                f"    '{x}': {list(self.df[x].head()) if x else []},",
+                f"    '{x}': {list(sample_df[x]) if x else []},",
             ]
             
             if y:
-                code_lines.append(f"    '{y}': {list(self.df[y].head())},")
+                code_lines.append(f"    '{y}': {list(sample_df[y])},")
             if color and color in self.df.columns:
-                code_lines.append(f"    '{color}': {list(self.df[color].head())},")
+                code_lines.append(f"    '{color}': {list(sample_df[color])},")
             
             code_lines.append("})")
             code_lines.append("")
             
+            # Create actual visualization using full dataset
             if viz_type == 'line':
                 fig = px.line(
                     self.df,
@@ -114,6 +114,7 @@ class DashboardBuilder:
                     color_discrete_sequence=[color] if color and color not in self.df.columns else None
                 )
                 
+                # Add code example (using sample data)
                 code_lines.extend([
                     "# Create line plot",
                     f"fig = px.line(",
@@ -338,42 +339,94 @@ class DashboardBuilder:
             else:
                 raise ValueError(f"Unsupported visualization type: {viz_type}")
             
-            # Add styling code
-            code_lines.extend([
-                "",
-                "# Apply styling",
-                "fig.update_layout(",
-                "    plot_bgcolor='white',",
-                "    paper_bgcolor='white',",
-                "    font={'color': '#4A4A4A'},",
-                "    title_font_color='#4A4A4A',",
-                "    showlegend=True,",
-                "    legend=dict(",
-                "        bgcolor='white',",
-                "        bordercolor='#FFD7D7',",
-                "        borderwidth=1",
-                "    ),",
-                "    margin=dict(l=10, r=10, t=30, b=10)",
-                ")",
-                "",
-                "# Update axes",
-                "fig.update_xaxes(",
-                "    gridcolor='#FFD7D7',",
-                "    showgrid=True,",
-                "    zeroline=False",
-                ")",
-                "fig.update_yaxes(",
-                "    gridcolor='#FFD7D7',",
-                "    showgrid=True,",
-                "    zeroline=False",
-                ")",
-                "",
-                "# Show the plot",
-                "fig.show()"
-            ])
+            # Update the styling section to match matplotlib theme
+            fig.update_layout(
+                plot_bgcolor='#FFFAF5',  # Lighter background for the plotting area
+                paper_bgcolor=self.colors['plot_container'],  # Keep container background
+                font={
+                    'family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+                    'color': self.colors['text_primary'],
+                    'size': 12
+                },
+                title={
+                    'font': {
+                        'family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+                        'color': self.colors['text_primary'],
+                        'size': 16
+                    },
+                    'text': title,
+                    'x': 0.5,
+                    'xanchor': 'center'
+                },
+                showlegend=True,
+                legend=dict(
+                    bgcolor=self.colors['plot_container'],  # Match container background
+                    bordercolor=self.colors['divider'],
+                    borderwidth=1,
+                    font={'size': 11, 'color': self.colors['text_primary']},
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01
+                ),
+                margin=dict(l=10, r=10, t=40, b=10),
+                modebar={
+                    'bgcolor': 'rgba(0,0,0,0)',
+                    'color': self.colors['primary'],
+                    'activecolor': self.colors['primary_dark']
+                }
+            )
+
+            # Update axes with matplotlib theme styling
+            fig.update_xaxes(
+                gridcolor=self.colors['grid'],
+                showgrid=True,
+                zeroline=False,
+                showline=True,
+                linecolor=self.colors['text_primary'],
+                linewidth=1,
+                ticks="outside",
+                tickfont={'size': 9, 'color': self.colors['text_primary']},
+                title={
+                    'font': {'size': 9, 'color': self.colors['text_primary']},
+                    'text': x
+                }
+            )
             
-            code = "\n".join(code_lines)
-            return fig, code
+            fig.update_yaxes(
+                gridcolor=self.colors['grid'],
+                showgrid=True,
+                zeroline=False,
+                showline=True,
+                linecolor=self.colors['text_primary'],
+                linewidth=1,
+                ticks="outside",
+                tickfont={'size': 9, 'color': self.colors['text_primary']},
+                title={
+                    'font': {'size': 9, 'color': self.colors['text_primary']},
+                    'text': y if y else ''
+                }
+            )
+
+            # Update hover template styling
+            fig.update_traces(
+                hoverlabel=dict(
+                    bgcolor=self.colors['surface'],
+                    font_size=9,
+                    font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+                    bordercolor=self.colors['text_primary']
+                )
+            )
+
+            # Set default color sequence for traces
+            fig.update_traces(
+                marker=dict(
+                    color=self.colors['primary']
+                ),
+                selector=dict(type=['bar', 'scatter', 'line'])
+            )
+
+            return fig, "\n".join(code_lines)
             
         except Exception as e:
             logger.error(f"Error creating {viz_type} visualization: {str(e)}")
