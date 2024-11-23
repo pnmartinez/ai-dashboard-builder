@@ -87,6 +87,7 @@ app = Dash(
 def get_api_key(model_name: str) -> str:
     """Get the appropriate API key based on the model name."""
     key_mapping = {
+        
         'gpt': 'OPENAI_API_KEY',
         'claude': 'ANTHROPIC_API_KEY',
         'mistral': 'MISTRAL_API_KEY',
@@ -190,6 +191,16 @@ app.layout = html.Div([
     dcc.Store(id='viz-state', storage_type='memory'),
     dcc.Store(id='dashboard-rendered', storage_type='memory'),
     dcc.Store(id='filter-state', storage_type='memory'),
+    dcc.Store(id='selected-figure-store', storage_type='memory'),
+    
+    # CSS styles as dictionaries
+    dcc.Store(
+        id='chart-container-hover-styles',
+        data={
+            'opacity': 1,
+            'backgroundColor': '#f8f9fa'
+        }
+    ),
     
     # Main container
     dbc.Container(fluid=True, children=[
@@ -828,25 +839,52 @@ def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str,
                     dbc.Row([
                         dbc.Col([
                             dbc.Card([
-                                dbc.CardHeader(
-                                    dbc.Tabs([
-                                        dbc.Tab(label="Chart", tab_id=f"chart-tab-{i}"),
-                                        dbc.Tab(label="Code", tab_id=f"code-tab-{i}")
-                                    ],
-                                    id={'type': 'tabs', 'index': i},
-                                    active_tab=f"chart-tab-{i}"),
-                                ),
+                                dbc.CardHeader([
+                                    dbc.Row([
+                                        dbc.Col(
+                                            dbc.Tabs([
+                                                dbc.Tab(label="Chart", tab_id=f"chart-tab-{i}"),
+                                                dbc.Tab(label="Code", tab_id=f"code-tab-{i}")
+                                            ],
+                                            id={'type': 'tabs', 'index': i},
+                                            active_tab=f"chart-tab-{i}"),
+                                            className="pe-0"
+                                        ),
+                                        dbc.Col(
+                                            html.Button(
+                                                "↗️",
+                                                id={'type': 'maximize-btn', 'index': i},
+                                                className='maximize-btn',
+                                                style={
+                                                    'backgroundColor': '#f8f9fa',
+                                                    'border': '2px solid #dee2e6',
+                                                    'borderRadius': '4px',
+                                                    'padding': '4px 8px',
+                                                    'cursor': 'pointer',
+                                                    'opacity': 1,
+                                                    'transition': 'opacity 0.2s',
+                                                    'boxShadow': '0 1px 3px rgba(0,0,0,0.1)'
+                                                }
+                                            ),
+                                            width="auto",
+                                            className="ps-2"
+                                        )
+                                    ], className="align-items-center g-0")
+                                ]),
                                 dbc.CardBody([
                                     html.Div([
-                                        html.Div(
+                                        # Chart content
+                                        html.Div([
                                             dcc.Graph(
                                                 id={'type': 'viz', 'index': i},
                                                 figure=fig,
                                                 config={'displayModeBar': False}
-                                            ),
-                                            id={'type': 'chart-content', 'index': i},
-                                            style={'display': 'block'}
+                                            )
+                                        ],
+                                        id={'type': 'chart-content', 'index': i},
+                                        className='chart-container'
                                         ),
+                                        # Code content
                                         html.Div([
                                             html.Pre(
                                                 code,
@@ -876,6 +914,23 @@ def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str,
                     ])
                 ])
             ], className='mb-4'),
+            
+            # Add the modal component here
+            dbc.Modal(
+                [
+                    dbc.ModalHeader(dbc.ModalTitle("Expanded View")),
+                    dbc.ModalBody(
+                        dcc.Graph(
+                            id='modal-figure',
+                            config={'displayModeBar': True}
+                        ),
+                        style={'height': '80vh'}
+                    ),
+                ],
+                id="figure-modal",
+                size="xl",
+                is_open=False,
+            )
         ]
         
         if not viz_only and not imported_viz_specs:
@@ -1196,6 +1251,88 @@ def update_kpi_selector(json_data: str) -> List[Dict[str, str]]:
     except Exception as e:
         logger.error(f"Error updating KPI selector: {str(e)}")
         return []
+
+# Add this modal component to the main layout (after the results-container)
+dbc.Modal(
+    [
+        dbc.ModalHeader(dbc.ModalTitle("Expanded View")),
+        dbc.ModalBody(
+            dcc.Graph(
+                id='modal-figure',
+                config={'displayModeBar': True}
+            ),
+            style={'height': '80vh'}  # Make modal take most of the screen
+        ),
+    ],
+    id="figure-modal",
+    size="xl",  # Extra large modal
+    is_open=False,
+),
+
+# Add these new callbacks at the end of the file
+@app.callback(
+    [Output('figure-modal', 'is_open'),
+     Output('modal-figure', 'figure')],
+    [Input({'type': 'maximize-btn', 'index': ALL}, 'n_clicks')],
+    [State({'type': 'viz', 'index': ALL}, 'figure'),
+     State('figure-modal', 'is_open')],
+    prevent_initial_call=True
+)
+def toggle_modal(n_clicks, figures, is_open):
+    """Handle maximizing/minimizing of figures."""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return False, dash.no_update
+    
+    # Get the index of the clicked button
+    button_id = ctx.triggered[0]['prop_id']
+    if not any(n_clicks):  # If no buttons were clicked
+        return False, dash.no_update
+    
+    # Extract the index from the button id
+    try:
+        clicked_idx = json.loads(button_id.split('.')[0])['index']
+        # Get the corresponding figure
+        figure = figures[clicked_idx]
+        
+        # Create a new figure with adjusted layout for the modal
+        modal_figure = go.Figure(figure)
+        modal_figure.update_layout(
+            height=800,  # Larger height for modal
+            margin=dict(l=20, r=20, t=30, b=20),
+            showlegend=True,
+            legend=dict(
+                bgcolor='white',
+                bordercolor='#FFD7D7',
+                borderwidth=1
+            )
+        )
+        
+        return not is_open, modal_figure
+    except Exception as e:
+        logger.error(f"Error in modal toggle: {str(e)}")
+        return False, dash.no_update
+
+# Define styles as dictionaries for better maintainability
+chart_container_style = {
+    'position': 'relative'  # To contain the maximize button
+}
+
+maximize_btn_style = {
+    'opacity': '0',
+    'transition': 'opacity 0.2s',
+    'position': 'absolute',
+    'top': '5px',
+    'right': '5px',
+    'backgroundColor': 'transparent',
+    ':hover': {
+        'backgroundColor': '#f8f9fa'
+    }
+}
+
+# These styles can be applied directly to components like:
+# html.Div(className='chart-container', style=chart_container_style)
+# html.Button(className='maximize-btn', style=maximize_btn_style)
 
 # --- 8. MAIN EXECUTION ---
 if __name__ == '__main__':
