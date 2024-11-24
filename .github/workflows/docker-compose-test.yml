@@ -1,0 +1,53 @@
+name: Docker Compose Integration Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build and start services
+      run: |
+        docker-compose -f docker-compose.all-in-one.yml up -d
+        
+    - name: Wait for services to be healthy
+      run: |
+        timeout 300 bash -c '
+        until docker-compose -f docker-compose.all-in-one.yml ps | grep -q "healthy"; do
+          echo "Waiting for services to be healthy..."
+          sleep 10
+        done
+        '
+        
+    - name: Test dashboard accessibility
+      run: |
+        timeout 30 bash -c '
+        until curl -s http://localhost:8050 > /dev/null; do
+          echo "Waiting for dashboard to be accessible..."
+          sleep 5
+        done
+        '
+        
+    - name: Test Ollama API
+      run: |
+        curl -s http://localhost:11434/api/tags
+        
+    - name: Show docker logs on failure
+      if: failure()
+      run: |
+        docker-compose -f docker-compose.all-in-one.yml logs
+        
+    - name: Cleanup
+      if: always()
+      run: |
+        docker-compose -f docker-compose.all-in-one.yml down -v 
