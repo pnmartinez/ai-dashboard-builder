@@ -1,17 +1,5 @@
 # AI Dashboard Builder
 
-## Project Structure
-```
-project_root/
-├── src/               # Source code
-│   ├── app.py        # Main application
-│   ├── dashboard_builder.py
-│   └── llm/          # LLM pipeline module
-├── docker/           # Docker configuration
-├── requirements.txt
-└── README.md
-```
-
 ## Development Setup
 
 1. Create a Python virtual environment:
