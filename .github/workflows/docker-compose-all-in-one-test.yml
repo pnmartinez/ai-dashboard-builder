@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
+  all-in-one-deployment-test:
     runs-on: ubuntu-latest
     
     steps:
