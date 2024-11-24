@@ -1,59 +1,76 @@
 # AI Dashboard Builder
 
-Drop your data and let the AI make a dashboard and extract insights.
-
-This is currently structured as a simple Plotly app that dynamically builds a dashboard by analyzing the dataset with LLMs. You can:
-- Use local LLMs (ollama)
-- Use external providers by providing your API KEY.
-
-![image](https://github.com/user-attachments/assets/5f266f41-34c8-4d2c-b689-40ace28433da)
-
-## Quick Start with Docker
-
-### Prerequisites
-- Docker and Docker Compose installed on your system
-
-### Option 1: Running with External API Providers
-
-1. You can supply the API KEY directly in the UI or create a `.env` file in the root directory:
-
-```bash
-# .env file
-OPENAI_API_KEY=your_openai_key_here
-GROQ_API_KEY=your_groq_key_here
+## Project Structure
+```
+project_root/
+├── src/               # Source code
+│   ├── app.py        # Main application
+│   ├── dashboard_builder.py
+│   └── llm/          # LLM pipeline module
+├── docker/           # Docker configuration
+├── requirements.txt
+└── README.md
 ```
 
-2. Run the Docker container:
+## Development Setup
+
+1. Create a Python virtual environment:
 ```bash
-docker compose up --build
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# or
+.\venv\Scripts\activate  # Windows
 ```
 
-### Option 2: Running with External Ollama
-
-1. Clone the repository:
+2. Install dependencies:
 ```bash
-git clone https://github.com/pnmartinez/ai-dashboard-builder.git
+pip install -r requirements.txt
 ```
 
-2. Ensure ollama has llama3.1 model pulled. If not, run `ollama pull llama3.1`.
-
-3. Run the Docker container:
+3. Set up environment variables:
 ```bash
-docker compose up --build
+cp .env.default .env
+# Edit .env with your API keys
 ```
 
-### Option 3: Running with Bundled Ollama
+## Deployment
 
-1. Clone the repository:
+### Option 1: Docker Compose (Recommended)
+
+1. Start the application with Docker Compose:
 ```bash
-git clone https://github.com/pnmartinez/ai-dashboard-builder.git
+docker-compose up --build
 ```
 
-2. Go into the folder and run the app using the all-in-one compose file:
+2. Access the dashboard at http://localhost:8050
+
+### Option 2: All-in-One Deployment (includes Ollama)
+
+1. Start both Ollama and the dashboard:
 ```bash
-docker compose -f docker-compose.all-in-one.yml up --build
+docker-compose -f docker-compose.all-in-one.yml up --build
 ```
 
-The bundled version will automatically pull and set up ollama with the required model (llama3.1). First run could take some minutes to pull the model.
+2. Access the dashboard at http://localhost:8050
 
-3. For any of the options above, open your browser and navigate to `http://localhost:8050` to see the dashboard.
+### Option 3: Manual Deployment
+
+1. Start Ollama separately (if using local models)
+2. Run the application:
+```bash
+python src/app.py
+```
+
+## Environment Variables
+
+- `OLLAMA_HOST`: Ollama server address (default: host.docker.internal)
+- `OPENAI_API_KEY`: OpenAI API key (for GPT models)
+- `ANTHROPIC_API_KEY`: Anthropic API key (for Claude models)
+- `GROQ_API_KEY`: Groq API key (for Mixtral/LLaMA models)
+
+## Development
+
+To run the application in development mode:
+```bash
+PYTHONPATH=$PYTHONPATH:./src python src/app.py
+```

@@ -1,3 +1,4 @@
+from llm import prompts 
 import os
 from typing import Dict, Any, Optional
 import pandas as pd
@@ -562,57 +563,7 @@ Please pay special attention to these KPIs in your analysis, focusing on:
 • Recommendations for improving or optimizing these KPIs
 """
                 
-                prompt = f"""Analyze this dataset and provide a detailed report in the following format:
-
-{kpi_context if kpis else ''}
-📊 DATASET OVERVIEW
-------------------
-• Total Records: {len(df)}
-• Total Features: {len(df.columns)}
-• Time Period: [infer from temporal column if applicable]
-• Dataset Purpose: [infer from content]
-
-📋 COLUMN ANALYSIS
------------------
-{", ".join(data_summary['columns'])}
-
-For each column:
-• Type: [data type]
-• Description: [what this column represents]
-• Value Range/Categories: [key values or ranges]
-• Quality Issues: [missing values, anomalies]
-{'• Relationship to KPIs: [describe influence on KPIs]' if kpis else ''}
-
-🔍 KEY OBSERVATIONS
------------------
-• [List 3-5 main patterns or insights]
-• [Note any data quality issues]
-• [Highlight interesting relationships]
-{'• [Focus on KPI drivers and correlations]' if kpis else ''}
-
-📈 STATISTICAL HIGHLIGHTS
------------------------
-• [Key statistics and distributions]
-• [Notable correlations]
-• [Significant patterns]
-{'• [Statistical analysis of KPI relationships]' if kpis else ''}
-
-💡 RECOMMENDATIONS
-----------------
-• [Suggest data cleaning steps]
-• [Propose analysis approaches]
-• [Recommend focus areas]
-{'• [Specific recommendations for KPI optimization]' if kpis else ''}
-
-Sample Data Preview:
-{pd.DataFrame(data_summary['sample_rows']).to_string()}
-
-Additional Information:
-- Data Types: {data_summary['data_types']}
-- Unique Values: {data_summary['unique_counts']}
-- Null Counts: {data_summary['null_counts']}
-
-Please provide a comprehensive analysis following this exact structure, using the section headers and emoji markers as shown."""
+                prompt = prompts.create_dataset_analysis_prompt(df, data_summary, kpis)
                 
                 # Query model and save response
                 if self.use_local:
@@ -686,27 +637,7 @@ Please provide a comprehensive analysis following this exact structure, using th
 
 Additionally, include visualizations for these key metrics of interest: {', '.join(kpis)}, with an emphasis on identifying trends and relationships with other variables in the dataset."""
                 
-                prompt = f"""Given the following dataset information, suggest appropriate visualizations for an insightful dashboard in a structured JSON format. Do not use as X or Y columns with only 1 unique value.
-
-Column Metadata:
-{column_metadata_json}
-
-Sample data:
-{sample_data}
-
-Return only a JSON structure intended for Plotly where each key is a visualization ID and the value contains:
-1. type: The chart type (e.g., 'line', 'bar', 'scatter', 'histogram', 'box', 'heatmap')
-2. x: Column(s) for x-axis
-3. y: Column(s) for y-axis (if applicable)
-4. color: Column for color encoding (if applicable)
-5. title: Suggested title for the visualization
-6. description: What insights this visualization provides
-7. parameters: Additional parameters for the chart (e.g., orientation, aggregation)
-
-{kpi_context if kpis else ''}
-
-Example response format:
-```json{example_format}```"""
+                prompt = prompts.create_visualization_prompt(column_metadata, sample_data, kpis)
 
                 logger.info("Generated visualization prompt")
 
@@ -917,18 +848,7 @@ Example response format:
         Returns:
             str: Pattern explanation
         """
-        prompt = f"""Analyze the following pattern in the dataset:
-{pattern_description}
-
-Dataset sample:
-{df.head(3).to_string()}
-
-Please provide:
-1. Possible explanations for this pattern
-2. Whether this pattern is expected or anomalous
-3. Potential implications or impacts
-4. Recommendations for further investigation
-"""
+        prompt = prompts.create_pattern_explanation_prompt(df, pattern_description)
         
         if self.use_local:
             return self._query_local(prompt)
@@ -950,25 +870,7 @@ Please provide:
             logger.info("Starting analysis summarization")
             try:
                 # Create the prompt with analysis and visualization info
-                prompt = f"""Based on the following dataset analysis and visualizations created, provide a concise summary of the key findings and insights.
-
-Dataset Analysis:
-{analysis}
-
-Visualizations Created:
-{json.dumps([{
-    'title': viz['title'],
-    'type': viz['type'],
-    'description': viz['description']
-} for viz in viz_specs.values()], indent=2)}
-
-Please provide:
-1. A brief overview of the dataset's purpose and content
-2. 3-5 key insights discovered from the analysis
-3. The most important patterns or trends shown in the visualizations
-4. Any potential recommendations or next steps for further analysis
-
-Keep the summary concise and focused on actionable insights."""
+                prompt = prompts.create_analysis_summary_prompt(analysis, viz_specs)
 
                 # Query model
                 logger.info("Querying model for summary")

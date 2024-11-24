@@ -9,6 +9,15 @@ various LLM providers.
 # --- 1. IMPORTS ---
 # Standard library imports
 import os
+from dotenv import load_dotenv
+
+# Get the project root directory (one level up from src)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Load environment variables from the project root
+load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
+load_dotenv(os.path.join(PROJECT_ROOT, '.env.default'))  # Load defaults if .env doesn't exist
+
 import io
 from io import BytesIO
 import json
@@ -28,16 +37,18 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import markdown2
-from dotenv import load_dotenv
 from dash.exceptions import PreventUpdate
 from dash.long_callback import DiskcacheLongCallbackManager
 import diskcache
 
 # Local imports
-from llm_pipeline import LLMPipeline
+from llm.llm_pipeline import LLMPipeline
 from dashboard_builder import DashboardBuilder
 
 # --- 2. CONSTANTS ---
+# Base directories
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # /app/src
+
 # Color Palette - Salmon theme
 COLORS = {
     'background': "#FFF5F5",
@@ -57,17 +68,18 @@ COLORS = {
 MAX_PREVIEW_ROWS = 1000
 MAX_PREVIEW_COLS = 100
 
-# Base directory
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 # --- 3. CONFIGURATION ---
-# Load environment variables
-load_dotenv()
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('Dashboard')
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
+# Add environment variable logging for debugging
+logger.info("Environment variables loaded:")
+logger.info(f"OPENAI_API_KEY: {'set' if os.getenv('OPENAI_API_KEY') else 'not set'}")
+logger.info(f"ANTHROPIC_API_KEY: {'set' if os.getenv('ANTHROPIC_API_KEY') else 'not set'}")
+logger.info(f"GROQ_API_KEY: {'set' if os.getenv('GROQ_API_KEY') else 'not set'}")
+logger.info(f"OLLAMA_HOST: {os.getenv('OLLAMA_HOST', 'not set')}")
 
 # Setup diskcache
 cache = diskcache.Cache("./cache")
@@ -1329,10 +1341,6 @@ maximize_btn_style = {
         'backgroundColor': '#f8f9fa'
     }
 }
-
-# These styles can be applied directly to components like:
-# html.Div(className='chart-container', style=chart_container_style)
-# html.Button(className='maximize-btn', style=maximize_btn_style)
 
 # --- 8. MAIN EXECUTION ---
 if __name__ == '__main__':
