@@ -2,7 +2,7 @@ services:
   ollama:
     build:
       context: .
-      dockerfile: Dockerfile.ollama
+      dockerfile: docker/Dockerfile.ollama
       network: host
     image: ollama_custom:latest
     container_name: ollama
@@ -23,16 +23,20 @@ services:
   dashboard:
     build:
       context: .
-      dockerfile: Dockerfile.dashboard
+      dockerfile: docker/Dockerfile.dashboard
       network: host
     ports:
       - "8050:8050"
     volumes:
       - ./llm_responses:/app/llm_responses
       - ./cache:/app/cache
+      - ./.env:/app/.env
+      - ./.env.default:/app/.env.default
     environment:
-      - LLM_API_KEY=${LLM_API_KEY}
       - OLLAMA_HOST=ollama
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy_key}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-dummy_key}
+      - GROQ_API_KEY=${GROQ_API_KEY:-dummy_key}
     depends_on:
       ollama:
         condition: service_healthy

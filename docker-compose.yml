@@ -4,23 +4,23 @@ services:
   dashboard:
     build:
       context: .
-      dockerfile: Dockerfile.dashboard
+      dockerfile: docker/Dockerfile.dashboard
       network: host
     ports:
       - "8050:8050"
     volumes:
       - ./llm_responses:/app/llm_responses
       - ./cache:/app/cache
-    env_file:
-      - ${ENV_FILE:-.env.default}
+      - ./.env:/app/.env
+      - ./.env.default:/app/.env.default
     environment:
       - OLLAMA_HOST=host.docker.internal
       - OPENAI_API_KEY=${OPENAI_API_KEY:-dummy_key}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-dummy_key}
-      - COHERE_API_KEY=${COHERE_API_KEY:-dummy_key}
+      - GROQ_API_KEY=${GROQ_API_KEY:-dummy_key}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: python app.py
+    command: python src/app.py
     networks:
       - ai-dashboard-net
 
