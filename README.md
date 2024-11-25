@@ -3,8 +3,9 @@
 
 ### Features
 
-* **Privacy** 🛡️: you can use local LLMs through Ollama for your private data.
-* **Flexibility** 🤸: make the LLMs focus on your priorities by selecting your KPIs in the dataset, or limit the dataset by columns and/or rows.
+* **Simplicity** 🌱: strong focus on keeping the project easy to use and the codebase simple.
+* **Privacy** 🛡️: use local LLMs through Ollama for your private data.
+* **Flexibility** 🤸: make the LLMs prioritise your KPIs in the dataset, limit the dataset by columns and/or rows, or use your favourite 3rd party LLM.
 * **Reusability** 🔄: each dashboard generates a reusable "viz_spec" JSON file in the "llm_responses" folder, accessible for future use through the "Import Previous Viz Specs" feature.
 
 
@@ -51,6 +52,11 @@ In the project root folder, you can create a `.env` file and set the API keys fo
 - `OPENAI_API_KEY`: OpenAI API key (for GPT models)
 - `ANTHROPIC_API_KEY`: Anthropic API key (for Claude models)
 - `GROQ_API_KEY`: Groq API key (for Mixtral/LLaMA models)
+
+
+## Contributing
+
+We welcome contributions! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) guide for details on how to get started.
 
 
 ## License
