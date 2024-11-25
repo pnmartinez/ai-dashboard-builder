@@ -12,7 +12,7 @@
   - Preview what you are passing: data importer wizard preview and filter the dataset by columns and/or rows,
   - Dynamic filters: the LLM infers the most relevant filters for your dataset dynamically,
   - Custom LLM: use your favourite 3rd party LLM (or local through Ollama).
-* **Reusability** 🔄: each dashboard generates a reusable "viz_spec" JSON file in the "llm_responses" folder, accessible for future use through the "Import Previous Viz Specs" feature.
+* **Reusability** 🔄: each dashboard generates a reusable "viz_spec" JSON file in the "llm_responses" folder, accessible for future use through the "Import Previous Viz Specs" feature. Each plot includes a "Code" tab to reproduce it anywhere.
 
 https://github.com/user-attachments/assets/02152b49-3d83-4382-9437-81704af40590
 
