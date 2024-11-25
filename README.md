@@ -1,4 +1,4 @@
-# AI Dashboard Builder 📊🤖 
+# AI Dashboard Builder 📊
 ![CI Status](https://github.com/pnmartinez/ai-dashboard-builder/actions/workflows/docker-compose-all-in-one-test.yml/badge.svg)
 
 > We welcome contributions! Please fork and submit PRs! See our [CONTRIBUTING.md](CONTRIBUTING.md) guide for details.
