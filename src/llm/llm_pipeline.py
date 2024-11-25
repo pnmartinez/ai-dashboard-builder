@@ -75,8 +75,9 @@ class LLMPipeline:
         self.groq_tokens_used = 0
         self.groq_last_reset = time.time()
         
-        # Create responses directory
-        self.responses_dir = "llm_responses"
+        # Update responses directory path to be relative to src folder
+        src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Get src directory
+        self.responses_dir = os.path.join(src_dir, "llm_responses")
         if not os.path.exists(self.responses_dir):
             os.makedirs(self.responses_dir)
             

@@ -44,3 +44,7 @@ llm_responses/
 cache/
 .cache/
 **/cache/
+
+# LLM responses
+src/llm_responses/*
+!src/llm_responses/.gitkeep

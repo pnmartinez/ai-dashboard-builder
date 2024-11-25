@@ -716,7 +716,8 @@ def toggle_viz_specs_modal(import_clicks: Optional[int], close_clicks: Optional[
     button_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     if button_id == 'import-viz-specs-button':
-        viz_specs_dir = os.path.join(BASE_DIR, 'llm_responses')
+        # Update the viz_specs_dir path to be relative to src folder
+        viz_specs_dir = os.path.join(BASE_DIR, "llm_responses")  # BASE_DIR is already src directory
         viz_specs_files = glob.glob(os.path.join(viz_specs_dir, 'viz_specs_*.json'))
         
         if not viz_specs_files:
@@ -736,7 +737,7 @@ def toggle_viz_specs_modal(import_clicks: Optional[int], close_clicks: Optional[
                         timestamp = datetime.min
                     
                     file_list.append({
-                        'path': file_path,
+                        'path': os.path.relpath(file_path, BASE_DIR),  # Store relative path
                         'timestamp': timestamp,
                         'display_data': {
                             'timestamp': formatted_timestamp,
