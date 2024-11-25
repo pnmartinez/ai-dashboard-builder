@@ -16,7 +16,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Load environment variables from the project root
 load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
-load_dotenv(os.path.join(PROJECT_ROOT, '.env.default'))  # Load defaults if .env doesn't exist
+
+# Unset any dummy API keys
+for key in ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GROQ_API_KEY']:
+    if os.getenv(key) == 'dummy_key':
+        os.environ.pop(key, None)
 
 import io
 from io import BytesIO
