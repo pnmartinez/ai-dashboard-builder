@@ -88,7 +88,10 @@ long_callback_manager = DiskcacheLongCallbackManager(cache)
 # --- 4. APP INITIALIZATION ---
 app = Dash(
     __name__,
-    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    external_stylesheets=[
+        dbc.themes.BOOTSTRAP,
+        'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css'
+    ],
     suppress_callback_exceptions=False,
     update_title=None,
     long_callback_manager=long_callback_manager,
@@ -218,15 +221,27 @@ app.layout = html.Div([
     dbc.Container(fluid=True, children=[
         # Header
         html.A(
-            html.H1('AI Dashboard Builder',
-                style={
-                    'textAlign': 'center',
-                    'color': COLORS['primary'],
-                    'marginBottom': '2rem',
-                    'paddingTop': '1rem',
-                    'textDecoration': 'none'
-                }
-            ),
+            [
+                html.H1('AI Dashboard Builder',
+                    style={
+                        'textAlign': 'center',
+                        'color': COLORS['primary'],
+                        'marginBottom': '0.5rem',
+                        'paddingTop': '1rem',
+                        'textDecoration': 'none'
+                    }
+                ),
+                html.H5(
+                    'Throw your data, let AI build a dashboard',
+                    style={
+                        'textAlign': 'center',
+                        'color': COLORS['text_secondary'],
+                        'marginBottom': '2rem',
+                        'fontWeight': 'lighter',
+                        'fontStyle': 'italic'
+                    }
+                )
+            ],
             href='/',
             style={'textDecoration': 'none'}
         ),
@@ -287,8 +302,8 @@ app.layout = html.Div([
                             ]),
                             style={
                                 'width': '100%',
-                                'height': '60px',
-                                'lineHeight': '60px',
+                                'height': '120px',  # Increased height
+                                'lineHeight': '120px',  # Adjusted line height
                                 'borderWidth': '1px',
                                 'borderStyle': 'dashed',
                                 'borderRadius': '5px',
@@ -319,8 +334,8 @@ app.layout = html.Div([
                         ),
                         dbc.Checkbox(
                             id='viz-only-checkbox',
-                            label="Visualizations only (faster process)",
-                            value=True,
+                            label="Add text insights (slower)",
+                            value=False,
                             className="mt-2",
                             style={'color': '#6c757d'}
                         ),
@@ -355,9 +370,61 @@ app.layout = html.Div([
                     fullscreen=False,
                 )
             ], width=10)
-        ], className="g-0")
-    ])
-], style={'backgroundColor': COLORS['background'], 'minHeight': '100vh'})
+        ], className="g-0"),
+        
+        # Spacer div to push footer down
+        html.Div(style={'flex': '1'}),
+        
+        # Footer
+        html.Footer(
+            dbc.Row([
+                # Left column (empty now)
+                dbc.Col([], width=4),
+                
+                # Center column with text and link
+                dbc.Col([
+                    html.P([
+                        "AI Dashboard Builder is open source",
+                        html.A(
+                            children=[html.I(className="fa fa-github", **{'aria-hidden': 'true'}), " Fork it or contribute on the project repo"],
+                            href="https://github.com/pnmartinez/ai-dashboard-builder",
+                            target="_blank",
+                            style={
+                                'color': COLORS['primary'],
+                                'textDecoration': 'none',
+                                'display': 'inline-block'
+                            }
+                        )
+                    ], 
+                    className="text-center mb-0",
+                    style={
+                        'color': COLORS['text_secondary'],
+                        'fontSize': '0.9rem'
+                    })
+                ], width=4),
+                
+                # Right column (empty)
+                dbc.Col([], width=4)
+            ], 
+            className="py-2",
+            style={
+                'borderTop': f'1px solid {COLORS["divider"]}',
+                'backgroundColor': COLORS['background'],
+                'width': '100%'
+            })
+        )
+    ], 
+    style={
+        'minHeight': '100vh',
+        'display': 'flex',
+        'flexDirection': 'column',
+        'backgroundColor': COLORS['background'],
+        'position': 'relative'
+    }),
+], style={
+    'backgroundColor': COLORS['background'],
+    'minHeight': '100vh'
+})
 
 # --- 7. CALLBACKS ---
 # Provider and API Key Management
@@ -491,7 +558,7 @@ def handle_upload(contents: str, filename: str, current_style: Dict) -> Tuple:
                 }
             ),
             dbc.Tooltip(
-                "Developer option: Reuse previously generated visualization specifications",
+                "Advanced option: Reuse previously generated visualization specifications",
                 target='import-viz-specs-button',
                 placement='right'
             ),
@@ -777,7 +844,7 @@ def use_viz_specs(n_clicks: List[Optional[int]], current_data: str,
     progress=[Output('upload-status', 'children')],
 )
 def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str, 
-                input_api_key: str, model: str, viz_only: bool, 
+                input_api_key: str, model: str, include_text: bool, 
                 kpis: List[str]) -> Tuple[html.Div, bool, str]:
     """Process the uploaded dataset and generate visualizations and analysis."""
     if not n_clicks or not json_data:
@@ -800,8 +867,8 @@ def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str,
             dashboard_builder = DashboardBuilder(df, COLORS)
             figures = dashboard_builder.create_all_figures(viz_specs)
             
-            analysis = "Analysis skipped - using imported visualization specifications"
-            summary = "Summary skipped - using imported visualization specifications"
+            analysis = None
+            summary = None
             
         else:
             if provider == 'external' and not api_key:
@@ -816,12 +883,12 @@ def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str,
                 os.environ["LLM_API_KEY"] = api_key
                 pipeline = LLMPipeline(model_name=model, use_local=False)
             
-            if not viz_only:
+            if include_text:
                 set_progress(html.Div("1/5 Analyzing dataset... (Rate limiting in effect)", 
                                     style={'color': COLORS['info']}))
                 analysis = pipeline.analyze_dataset(df, kpis)
             else:
-                analysis = "Analysis skipped - visualizations only mode"
+                analysis = None
             
             set_progress(html.Div("2/5 Generating visualization suggestions... (Rate limiting in effect)", 
                                 style={'color': COLORS['info']}))
@@ -834,12 +901,12 @@ def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str,
             dashboard_builder = DashboardBuilder(df, COLORS)
             figures = dashboard_builder.create_all_figures(viz_specs)
             
-            if not viz_only:
+            if include_text and analysis:
                 set_progress(html.Div("4/5 Generating insights summary... (Rate limiting in effect)", 
                                     style={'color': COLORS['info']}))
                 summary = pipeline.summarize_analysis(analysis, viz_specs)
             else:
-                summary = "Summary skipped - visualizations only mode"
+                summary = None
         
         set_progress(html.Div("5/5 Rendering dashboard...", 
                             style={'color': COLORS['info']}))
@@ -927,43 +994,50 @@ def analyze_data(set_progress, n_clicks: int, json_data: str, provider: str,
                 ])
             ], className='mb-4'),
             
-            # Add the modal component here
             dbc.Modal(
                 [
                     dbc.ModalHeader(dbc.ModalTitle("Expanded View")),
                     dbc.ModalBody(
                         dcc.Graph(
                             id='modal-figure',
-                            config={'displayModeBar': True}
+                            config={'displayModeBar': True},
+                            style={
+                                'height': 'calc(80vh - 60px)',  # Modal height minus header
+                                'width': '100%'
+                            }
                         ),
-                        style={'height': '80vh'}
+                        style={'padding': '0px'}  # Remove default padding to maximize space
                     ),
                 ],
                 id="figure-modal",
                 size="xl",
                 is_open=False,
+                style={
+                    'maxWidth': '95vw',
+                    'width': '95vw'
+                }
             )
         ]
         
-        if not viz_only and not imported_viz_specs:
+        if include_text and analysis and summary:
             components.extend([
                 dbc.Card([
-                    dbc.CardHeader(html.H3("Key Insights (experimental)", className="mb-0")),
+                    dbc.CardHeader(html.H3("Key Insights", className="mb-0")),
                     dbc.CardBody(
-                        dash_dangerously_set_inner_html.DangerouslySetInnerHTML(
-                            markdown2.markdown(summary, extras=['tables', 'break-on-newline', 'cuddled-lists'])
-                        ),
-                        style={'backgroundColor': COLORS['background'], 'padding': '1rem', 'borderRadius': '5px'}
+                        dcc.Markdown(
+                            summary,
+                            style={'backgroundColor': COLORS['background'], 'padding': '1rem', 'borderRadius': '5px'}
+                        )
                     )
                 ], className='mb-4'),
                 
                 dbc.Card([
-                    dbc.CardHeader(html.H3("Dataset Analysis (experimental)", className="mb-0")),
+                    dbc.CardHeader(html.H3("Dataset Analysis", className="mb-0")),
                     dbc.CardBody(
-                        dash_dangerously_set_inner_html.DangerouslySetInnerHTML(
-                            markdown2.markdown(analysis, extras=['tables', 'break-on-newline', 'cuddled-lists'])
-                        ),
-                        style={'backgroundColor': COLORS['background'], 'padding': '1rem', 'borderRadius': '5px'}
+                        dcc.Markdown(
+                            analysis,
+                            style={'backgroundColor': COLORS['background'], 'padding': '1rem', 'borderRadius': '5px'}
+                        )
                     )
                 ])
             ])
@@ -1308,19 +1382,53 @@ def toggle_modal(n_clicks, figures, is_open):
         figure = figures[clicked_idx]
         
         # Create a new figure with adjusted layout for the modal
-        modal_figure = go.Figure(figure)
-        modal_figure.update_layout(
-            height=800,  # Larger height for modal
-            margin=dict(l=20, r=20, t=30, b=20),
-            showlegend=True,
-            legend=dict(
-                bgcolor='white',
-                bordercolor='#FFD7D7',
-                borderwidth=1
+        modal_figure = go.Figure()
+        
+        # Copy each trace individually to preserve color settings
+        for trace in figure['data']:
+            new_trace = dict(trace)
+            
+            # Handle color settings for markers
+            if 'marker' in new_trace:
+                marker = dict(new_trace['marker'])
+                # If color is None, set a default color
+                if marker.get('color') is None:
+                    marker['color'] = '#636EFA'  # Default Plotly blue
+                # If color is a list containing None values, replace with default color
+                elif isinstance(marker.get('color'), list):
+                    marker['color'] = [('#636EFA' if c is None else c) for c in marker['color']]
+                new_trace['marker'] = marker
+            
+            modal_figure.add_trace(new_trace)
+        
+        # Copy and update the layout
+        if 'layout' in figure:
+            layout = dict(figure['layout'])
+            # Update layout for modal
+            layout.update(
+                # Use fixed height that matches container
+                height=700,  # Slightly less than 80vh to ensure it fits
+                # Adjust margins to maximize plot area
+                margin=dict(l=20, r=20, t=30, b=20),
+                # Ensure plot fits within container
+                autosize=True,
+                # Legend settings
+                showlegend=True,
+                legend=dict(
+                    bgcolor='white',
+                    bordercolor='#FFD7D7',
+                    borderwidth=1,
+                    # Move legend inside plot area
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01
+                )
             )
-        )
+            modal_figure.update_layout(layout)
         
         return not is_open, modal_figure
+        
     except Exception as e:
         logger.error(f"Error in modal toggle: {str(e)}")
         return False, dash.no_update

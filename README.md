@@ -1,64 +1,215 @@
-# AI Dashboard Builder
+"""
+Prompts module for the LLM Pipeline.
 
-## Development Setup
+This module contains all the prompts used by the LLM Pipeline, organized by their purpose.
+Each prompt is a function that takes relevant parameters and returns a formatted string.
+"""
 
-1. Create a Python virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or
-.\venv\Scripts\activate  # Windows
-```
+from typing import Dict, Any, List, Optional
+import pandas as pd
+import json
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+def create_dataset_analysis_prompt(
+    df: pd.DataFrame,
+    data_summary: Dict[str, Any],
+    kpis: Optional[List[str]] = None
+) -> str:
+    """
+    Create a prompt for dataset analysis.
+    
+    Args:
+        df: The dataframe to analyze
+        data_summary: Dictionary containing dataset summary information
+        kpis: Optional list of KPI columns to focus on
+    
+    Returns:
+        Formatted prompt string
+    """
+    # KPI context section
+    kpi_context = ""
+    if kpis:
+        kpi_context = f"""
+🎯 KEY PERFORMANCE INDICATORS
+--------------------------
+The following columns have been identified as key metrics of interest:
+{', '.join(kpis)}
 
-3. Set up environment variables:
-```bash
-cp .env.default .env
-# Edit .env with your API keys
-```
+Please pay special attention to these KPIs in your analysis, focusing on:
+• Factors that influence these metrics
+• Relationships between these KPIs and other variables
+• Patterns and trends in these metrics
+• Recommendations for improving or optimizing these KPIs
+"""
 
-## Deployment
+    return f"""Analyze this dataset and provide a detailed report in the following format:
 
-### Option 1: Docker Compose (Recommended)
+{kpi_context if kpis else ''}
+📊 DATASET OVERVIEW
+------------------
+• Total Records: {len(df)}
+• Total Features: {len(df.columns)}
+• Time Period: [infer from temporal column if applicable]
+• Dataset Purpose: [infer from content]
 
-1. Start the application with Docker Compose:
-```bash
-docker-compose up --build
-```
+📋 COLUMN ANALYSIS
+-----------------
+{", ".join(data_summary['columns'])}
 
-2. Access the dashboard at http://localhost:8050
+For each column:
+• Type: [data type]
+• Description: [what this column represents]
+• Value Range/Categories: [key values or ranges]
+• Quality Issues: [missing values, anomalies]
+{'• Relationship to KPIs: [describe influence on KPIs]' if kpis else ''}
 
-### Option 2: All-in-One Deployment (includes Ollama)
+🔍 KEY OBSERVATIONS
+-----------------
+• [List 3-5 main patterns or insights]
+• [Note any data quality issues]
+• [Highlight interesting relationships]
+{'• [Focus on KPI drivers and correlations]' if kpis else ''}
 
-1. Start both Ollama and the dashboard:
-```bash
-docker-compose -f docker-compose.all-in-one.yml up --build
-```
+📈 STATISTICAL HIGHLIGHTS
+-----------------------
+• [Key statistics and distributions]
+• [Notable correlations]
+• [Significant patterns]
+{'• [Statistical analysis of KPI relationships]' if kpis else ''}
 
-2. Access the dashboard at http://localhost:8050
+💡 RECOMMENDATIONS
+----------------
+• [Suggest data cleaning steps]
+• [Propose analysis approaches]
+• [Recommend focus areas]
+{'• [Specific recommendations for KPI optimization]' if kpis else ''}
 
-### Option 3: Manual Deployment
+Sample Data Preview:
+{pd.DataFrame(data_summary['sample_rows']).to_string()}
 
-1. Start Ollama separately (if using local models)
-2. Run the application:
-```bash
-python src/app.py
-```
+Additional Information:
+- Data Types: {data_summary['data_types']}
+- Unique Values: {data_summary['unique_counts']}
+- Null Counts: {data_summary['null_counts']}
 
-## Environment Variables
+Please provide a comprehensive analysis following this exact structure, using the section headers and emoji markers as shown."""
 
-- `OLLAMA_HOST`: Ollama server address (default: host.docker.internal)
-- `OPENAI_API_KEY`: OpenAI API key (for GPT models)
-- `ANTHROPIC_API_KEY`: Anthropic API key (for Claude models)
-- `GROQ_API_KEY`: Groq API key (for Mixtral/LLaMA models)
+def create_visualization_prompt(
+    column_metadata: Dict[str, Any],
+    sample_data: str,
+    kpis: Optional[List[str]] = None
+) -> str:
+    """
+    Create a prompt for visualization suggestions.
+    
+    Args:
+        column_metadata: Dictionary containing column metadata
+        sample_data: String representation of sample data
+        kpis: Optional list of KPI columns to focus on
+    
+    Returns:
+        Formatted prompt string
+    """
+    example_format = """
+{
+    "viz_1": {
+        "type": "bar",
+        "x": "COLUMNNAME_FROM_DF_AS_X_VALUES",
+        "y": "COLUMNNAME_FROM_DF_AS_Y_VALUES",
+        "color": "COLUMNNAME_FROM_DF_TO_USE_AS_COLOR_ENCODING or None",
+        "title": "e.g. Event Distribution by Day",
+        "description": "e.g. Shows event frequency across days",
+        "parameters": {
+            "orientation": "v",
+            "aggregation": "count"
+        }
+    }
+}"""
 
-## Development
+    kpi_context = ""
+    if kpis:
+        kpi_context = f"""
 
-To run the application in development mode:
-```bash
-PYTHONPATH=$PYTHONPATH:./src python src/app.py
-```
+Additionally, include visualizations for these key metrics of interest: {', '.join(kpis)}, with an emphasis on identifying trends and relationships with other variables in the dataset."""
+
+    return f"""Given the following dataset information, suggest appropriate visualizations for an insightful dashboard in a structured JSON format. Do not use as X or Y columns with only 1 unique value.
+
+Column Metadata:
+{json.dumps(column_metadata, indent=2)}
+
+Sample data:
+{sample_data}
+
+Return only a JSON structure intended for Plotly where each key is a visualization ID and the value contains:
+1. type: The chart type (e.g., 'line', 'bar', 'scatter', 'histogram', 'box', 'heatmap')
+2. x: Column(s) for x-axis
+3. y: Column(s) for y-axis (if applicable)
+4. color: Column for color encoding (if applicable)
+5. title: Suggested title for the visualization
+6. description: What insights this visualization provides
+7. parameters: Additional parameters for the chart (e.g., orientation, aggregation)
+
+{kpi_context if kpis else ''}
+
+Example response format:
+```json{example_format}```"""
+
+def create_pattern_explanation_prompt(
+    df: pd.DataFrame,
+    pattern_description: str
+) -> str:
+    """
+    Create a prompt for pattern explanation.
+    
+    Args:
+        df: The dataframe containing the pattern
+        pattern_description: Description of the pattern to analyze
+    
+    Returns:
+        Formatted prompt string
+    """
+    return f"""Analyze the following pattern in the dataset:
+{pattern_description}
+
+Dataset sample:
+{df.head(3).to_string()}
+
+Please provide:
+1. Possible explanations for this pattern
+2. Whether this pattern is expected or anomalous
+3. Potential implications or impacts
+4. Recommendations for further investigation
+"""
+
+def create_analysis_summary_prompt(
+    analysis: str,
+    viz_specs: Dict[str, Any]
+) -> str:
+    """
+    Create a prompt for summarizing analysis and visualizations.
+    
+    Args:
+        analysis: The dataset analysis text
+        viz_specs: The visualization specifications
+    
+    Returns:
+        Formatted prompt string
+    """
+    return f"""Based on the following dataset analysis and visualizations created, provide a concise summary of the key findings and insights.
+
+Dataset Analysis:
+{analysis}
+
+Visualizations Created:
+{json.dumps([{
+    'title': viz['title'],
+    'type': viz['type'],
+    'description': viz['description']
+} for viz in viz_specs.values()], indent=2)}
+
+Please provide:
+1. A brief overview of the dataset's purpose and content
+2. 3-5 key insights discovered from the analysis
+3. The most important patterns or trends shown in the visualizations
+4. Any potential recommendations or next steps for further analysis
+
+Keep the summary concise and focused on actionable insights.""" 
