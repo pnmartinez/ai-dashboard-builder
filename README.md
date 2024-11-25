@@ -1,4 +1,4 @@
-# AI Dashboard Builder 📊🤖 ![CI Status](https://github.com/pnmartinez/ai-dashboard-builder/actions/workflows/ci.yml/badge.svg)
+# AI Dashboard Builder 📊🤖 ![CI Status](https://github.com/pnmartinez/ai-dashboard-builder/actions/workflows/docker-compose-all-in-one-test.yml.yml/badge.svg)
 
 ### Features
 
