@@ -38,4 +38,9 @@ env/
 
 # Project specific
 llm_responses/
-*.log 
+*.log
+
+# Cache
+cache/
+.cache/
+**/cache/

@@ -1,11 +1,15 @@
 # AI Dashboard Builder 📊🤖 
 ![CI Status](https://github.com/pnmartinez/ai-dashboard-builder/actions/workflows/docker-compose-all-in-one-test.yml/badge.svg)
 
-### Features
+### Focus on
 
 * **Simplicity** 🌱: strong focus on keeping the project easy to use and the codebase simple.
 * **Privacy** 🛡️: use local LLMs through Ollama for your private data.
-* **Flexibility** 🤸: make the LLMs prioritise your KPIs in the dataset, limit the dataset by columns and/or rows, or use your favourite 3rd party LLM.
+* **Flexibility** 🤸: flexible features like:
+  - KPI-directed: Prompt the LLMs to prioritize your KPIs in the dataset,
+  - Preview what you are passing: data importer wizard preview and filter the dataset by columns and/or rows,
+  - Dynamic filters: the LLM infers the most relevant filters for your dataset dynamically,
+  - Custom LLM: use your favourite 3rd party LLM (or local through Ollama).
 * **Reusability** 🔄: each dashboard generates a reusable "viz_spec" JSON file in the "llm_responses" folder, accessible for future use through the "Import Previous Viz Specs" feature.
 
 
