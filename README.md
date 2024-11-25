@@ -12,6 +12,7 @@
   - Custom LLM: use your favourite 3rd party LLM (or local through Ollama).
 * **Reusability** 🔄: each dashboard generates a reusable "viz_spec" JSON file in the "llm_responses" folder, accessible for future use through the "Import Previous Viz Specs" feature.
 
+https://github.com/user-attachments/assets/02152b49-3d83-4382-9437-81704af40590
 
 ## Setup
 
