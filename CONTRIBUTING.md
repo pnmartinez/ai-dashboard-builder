@@ -13,7 +13,12 @@ git clone https://github.com/YOUR_USERNAME/ai-dashboard-builder.git
 ```
 3. Set up the development environment:
 ```bash
-PYTHONPATH=$PYTHONPATH:./src python src/app.py
+To run the application in development mode:
+
+```bash
+pip install uv  # if you don't have it already
+uv run ai_dashboard_builder --dev
+```
 ```
 
 ### 2. Making Changes
@@ -64,11 +69,14 @@ git push origin feature/your-feature-name
 
 ```
 ai-dashboard-builder/
+├── docker/  # Individual container Dockerfiles
 ├── src/
-│   ├── app.py           # Main application entry point
-│   ├── llm/             # LLM integration modules
-│   └── ...
-├── docker/              # Individual container Dockerfiles
+│   └── ai_dashboard_builder/
+│       ├── app.py  # Defines dash application
+│       ├── cli.py  # Command line interface
+│       ├── llm/  # LLM integration modules
+│       ├── utils/  # Utility functions
+│       └── ...
 └── ...
 ```
 

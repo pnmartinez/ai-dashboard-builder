@@ -47,8 +47,10 @@ python src/app.py
 ## Development
 
 To run the application in development mode:
+
 ```bash
-PYTHONPATH=$PYTHONPATH:./src python src/app.py
+pip install uv  # if you don't have it already
+uv run ai_dashboard_builder --dev
 ```
 
 ## Setting API KEYS and/or Olama
