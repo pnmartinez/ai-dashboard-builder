@@ -19,7 +19,7 @@ dependencies = [
     "pandas==2.2.1",
     "plotly==5.19.0",
     "python-dotenv==1.0.0",
-    "requests==2.31.0",
+    "requests==2.32.2",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
