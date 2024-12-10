@@ -1,27 +1,25 @@
-"""
-Prompts module for the LLM Pipeline.
+"""Prompts module for the LLM Pipeline.
 
 This module contains all the prompts used by the LLM Pipeline, organized by their purpose.
 Each prompt is a function that takes relevant parameters and returns a formatted string.
 """
 
-from typing import Dict, Any, List, Optional
-import pandas as pd
 import json
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+
 
 def create_dataset_analysis_prompt(
-    df: pd.DataFrame,
-    data_summary: Dict[str, Any],
-    kpis: Optional[List[str]] = None
+    df: pd.DataFrame, data_summary: Dict[str, Any], kpis: Optional[List[str]] = None
 ) -> str:
-    """
-    Create a prompt for dataset analysis.
-    
+    """Create a prompt for dataset analysis.
+
     Args:
         df: The dataframe to analyze
         data_summary: Dictionary containing dataset summary information
         kpis: Optional list of KPI columns to focus on
-    
+
     Returns:
         Formatted prompt string
     """
@@ -93,19 +91,17 @@ Additional Information:
 
 Please provide a comprehensive analysis following this exact structure, using the section headers and emoji markers as shown."""
 
+
 def create_visualization_prompt(
-    column_metadata: Dict[str, Any],
-    sample_data: str,
-    kpis: Optional[List[str]] = None
+    column_metadata: Dict[str, Any], sample_data: str, kpis: Optional[List[str]] = None
 ) -> str:
-    """
-    Create a prompt for visualization suggestions.
-    
+    """Create a prompt for visualization suggestions.
+
     Args:
         column_metadata: Dictionary containing column metadata
         sample_data: String representation of sample data
         kpis: Optional list of KPI columns to focus on
-    
+
     Returns:
         Formatted prompt string
     """
@@ -153,17 +149,16 @@ Return only a JSON structure intended for Plotly where each key is a visualizati
 Example response format:
 ```json{example_format}```"""
 
+
 def create_pattern_explanation_prompt(
-    df: pd.DataFrame,
-    pattern_description: str
+    df: pd.DataFrame, pattern_description: str
 ) -> str:
-    """
-    Create a prompt for pattern explanation.
-    
+    """Create a prompt for pattern explanation.
+
     Args:
         df: The dataframe containing the pattern
         pattern_description: Description of the pattern to analyze
-    
+
     Returns:
         Formatted prompt string
     """
@@ -180,17 +175,14 @@ Please provide:
 4. Recommendations for further investigation
 """
 
-def create_analysis_summary_prompt(
-    analysis: str,
-    viz_specs: Dict[str, Any]
-) -> str:
-    """
-    Create a prompt for summarizing analysis and visualizations.
-    
+
+def create_analysis_summary_prompt(analysis: str, viz_specs: Dict[str, Any]) -> str:
+    """Create a prompt for summarizing analysis and visualizations.
+
     Args:
         analysis: The dataset analysis text
         viz_specs: The visualization specifications
-    
+
     Returns:
         Formatted prompt string
     """
@@ -212,4 +204,4 @@ Please provide:
 3. The most important patterns or trends shown in the visualizations
 4. Any potential recommendations or next steps for further analysis
 
-Keep the summary concise and focused on actionable insights.""" 
+Keep the summary concise and focused on actionable insights."""

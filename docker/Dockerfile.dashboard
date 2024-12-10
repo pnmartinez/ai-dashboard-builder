@@ -1,6 +1,9 @@
 # Use an official Python runtime as a parent image
 FROM python:3.10-slim
 
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+
 # Set working directory
 WORKDIR /app
 
@@ -18,25 +21,25 @@ RUN for i in $(seq 1 3); do \
     done
 
 # Copy requirements first to leverage Docker cache
-COPY requirements.txt .
+COPY pyproject.toml README.md ./
+
+# Install uv
+RUN pip install uv
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv sync --no-dev --no-install-project
 
 # Copy the source code
 COPY src/ /app/src/
 
+# Install source code as package
+RUN uv sync --no-dev
+
 # Create directories for data persistence
 RUN mkdir -p /app/llm_responses /app/cache
-
-# Add src to Python path
-ENV PYTHONPATH="${PYTHONPATH}:/app"
 
 # Expose port
 EXPOSE 8050
 
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-
 # Run the application
-CMD ["python", "src/app.py"] 
+CMD ["uv", "run", "ai_dashboard_builder"]
