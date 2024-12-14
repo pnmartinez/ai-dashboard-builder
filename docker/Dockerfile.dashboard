@@ -41,5 +41,9 @@ RUN mkdir -p /app/llm_responses /app/cache
 # Expose port
 EXPOSE 8050
 
+# Add healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8050/ || exit 1s
+
 # Run the application
 CMD ["uv", "run", "ai_dashboard_builder"]
