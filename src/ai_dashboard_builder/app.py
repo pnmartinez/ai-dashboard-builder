@@ -103,8 +103,8 @@ app = Dash(
 
 
 # --- 5. UTILITY FUNCTIONS ---
-def get_api_key(model_name: str) -> str:
-    """Get the appropriate API key based on the model name."""
+def get_api_key_from_env_file(model_name: str) -> str:
+    """Get the appropriate API key based on the model name from environment variables."""
     key_mapping = {
         "gpt": "OPENAI_API_KEY",
         "claude": "ANTHROPIC_API_KEY",
@@ -520,16 +520,31 @@ app.layout = html.Div(
         Output("api-key-input", "placeholder"),
     ],
     [Input("llm-provider", "value"), Input("model-selection", "value")],
+    [State("api-key-input", "value")]  # Add State to preserve user input
 )
-def toggle_api_key(provider: str, model: str) -> tuple:
+def toggle_api_key(provider: str, model: str, current_key: str) -> Tuple[bool, bool, str, str]:
     """Toggle visibility and populate API key input based on provider selection."""
     if provider != "external":
         return False, False, "", "Enter API Key"
 
-    api_key = get_api_key(model)
-    if api_key:
-        return True, True, api_key, "API KEY loaded"
-    return True, True, "", "Enter API Key"
+    # Only get key from env if there's no user-entered key
+    if not current_key:
+        api_key = get_api_key_from_env_file(model)
+        if api_key:
+            return True, True, api_key, "API KEY loaded"
+        return True, True, "", "Enter API Key"
+    
+    # Preserve user-entered key
+    return True, True, current_key, "API KEY entered"
+
+@app.callback(
+    Output("api-key-input", "value", allow_duplicate=True),
+    Input("api-key-input", "value"),
+    prevent_initial_call=True
+)
+def update_api_key(value: str) -> str:
+    """Handle user input in API key field."""
+    return value
 
 
 # File Upload and Preview
@@ -1035,7 +1050,27 @@ def analyze_data(
         raise PreventUpdate
 
     try:
-        api_key = get_api_key(model) or input_api_key
+        # Prioritize UI-provided API key over environment variable
+        api_key = input_api_key or get_api_key_from_env_file(model)
+        
+        if provider == "external" and not api_key:
+            raise ValueError("API key is required for external provider")
+
+        # Set the appropriate environment variable based on the model
+        if api_key:
+            key_var = None
+            if "gpt" in model.lower():
+                key_var = "OPENAI_API_KEY"
+            elif "claude" in model.lower():
+                key_var = "ANTHROPIC_API_KEY"
+            elif "mistral" in model.lower():
+                key_var = "MISTRAL_API_KEY"
+            elif any(name in model.lower() for name in ["mixtral", "groq", "llama", "gemma"]):
+                key_var = "GROQ_API_KEY"
+            
+            if key_var:
+                os.environ[key_var] = api_key
+                logger.info(f"Set {key_var} from UI input")
 
         data_store = json.loads(json_data)
         df_full = pd.read_json(io.StringIO(data_store["full_data"]), orient="split")

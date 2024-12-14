@@ -60,6 +60,33 @@ class LLMPipeline:
         """
         self.model_name = model_name
         self.use_local = use_local
+        
+        # Get API key from environment based on model type
+        if not use_local:
+            if "gpt" in model_name.lower():
+                self.api_key = os.getenv("OPENAI_API_KEY")
+                key_type = "OpenAI"
+            elif "claude" in model_name.lower():
+                self.api_key = os.getenv("ANTHROPIC_API_KEY")
+                key_type = "Anthropic"
+            elif "mistral" in model_name.lower():
+                self.api_key = os.getenv("MISTRAL_API_KEY")
+                key_type = "Mistral"
+            elif any(name in model_name.lower() for name in ["mixtral", "groq", "llama", "gemma"]):
+                self.api_key = os.getenv("GROQ_API_KEY")
+                key_type = "Groq"
+            else:
+                self.api_key = os.getenv("LLM_API_KEY")
+                key_type = "Generic"
+
+            if not self.api_key:
+                error_msg = f"No {key_type} API key found in environment for model: {model_name}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            logger.info(f"Successfully initialized with {key_type} API key")
+
+        # Rest of the initialization code...
         ollama_host = os.getenv("OLLAMA_HOST", "host.docker.internal")
         self.ollama_base_url = f"http://{ollama_host}:11434/api"
 
@@ -88,28 +115,6 @@ class LLMPipeline:
         logger.info(
             f"Initializing LLMPipeline with model: {model_name} (local: {use_local})"
         )
-
-        if not use_local:
-            # Get API key based on model
-            if "gpt" in model_name:
-                self.api_key = os.getenv("OPENAI_API_KEY")
-            elif "claude" in model_name:
-                self.api_key = os.getenv("ANTHROPIC_API_KEY")
-            elif "mistral" in model_name:
-                self.api_key = os.getenv("MISTRAL_API_KEY")
-            elif (
-                "mixtral" in model_name
-                or "groq" in model_name
-                or "llama" in model_name
-                or "gemma" in model_name
-            ):
-                self.api_key = os.getenv("GROQ_API_KEY")
-            else:
-                self.api_key = os.getenv("LLM_API_KEY")
-
-            if not self.api_key:
-                logger.error("API key not found for model: " + model_name)
-                raise ValueError(f"API key not found for model: {model_name}")
 
     def _serialize_for_json(self, obj) -> Any:
         """Convert various data types to JSON-serializable format.
