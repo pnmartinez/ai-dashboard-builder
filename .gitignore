@@ -48,3 +48,14 @@ cache/
 # LLM responses
 src/llm_responses/*
 !src/llm_responses/.gitkeep
+
+# Test artifacts
+coverage.xml
+.coverage
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# Test output directories
+htmlcov/
+test-reports/
