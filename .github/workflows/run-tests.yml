@@ -29,13 +29,14 @@ jobs:
         pip install pytest pytest-cov pytest-mock
         pip install -e .
 
-    - name: Run tests with coverage
+    - name: Run tests with JUnit report
       env:
         OPENAI_API_KEY: dummy_key
         ANTHROPIC_API_KEY: dummy_key
         GROQ_API_KEY: dummy_key
       run: |
-        pytest src/ai_dashboard_builder/tests/ -v --cov=ai_dashboard_builder --cov-report=xml
+        pytest src/ai_dashboard_builder/tests/ -v --junitxml=results.xml
+
 
     - name: Check test pass ratio
       run: |
