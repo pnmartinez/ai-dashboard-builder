@@ -5,7 +5,7 @@ import argparse
 from ai_dashboard_builder.app import app
 
 DEFAULT_PORT = 8050
-DEFAULT_HOST = "localhost"
+DEFAULT_HOST = "0.0.0.0"
 
 
 def prod_server(port: int = DEFAULT_PORT, host: str = DEFAULT_HOST):
