@@ -35,7 +35,7 @@ jobs:
         ANTHROPIC_API_KEY: dummy_key
         GROQ_API_KEY: dummy_key
       run: |
-        pytest src/tests/ -v --cov=ai_dashboard_builder --cov-report=xml
+        pytest src/ai_dashboard_builder/tests/ -v --cov=ai_dashboard_builder --cov-report=xml
 
     - name: Check test coverage threshold
       run: |
