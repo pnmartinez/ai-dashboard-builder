@@ -15,6 +15,7 @@ import pandas as pd
 import requests
 
 from ai_dashboard_builder.llm import prompts
+from ai_dashboard_builder.utils.paths import get_root_path
 
 # Configure more detailed logging
 logging.basicConfig(
@@ -104,13 +105,13 @@ class LLMPipeline:
         self.groq_tokens_used = 0
         self.groq_last_reset = time.time()
 
-        # Update responses directory path to be relative to src folder
-        src_dir = os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))
-        )  # Get src directory
-        self.responses_dir = os.path.join(src_dir, "llm_responses")
-        if not os.path.exists(self.responses_dir):
-            os.makedirs(self.responses_dir)
+        # Update responses directory path to be relative to project root
+        root_path = get_root_path()
+        self.responses_dir = os.path.join(root_path, "src", "ai_dashboard_builder", "llm_responses")
+        
+        # Ensure the directory exists
+        os.makedirs(self.responses_dir, exist_ok=True)
+        logger.info(f"LLM responses directory: {self.responses_dir}")
 
         logger.info(
             f"Initializing LLMPipeline with model: {model_name} (local: {use_local})"
@@ -879,33 +880,48 @@ class LLMPipeline:
                 # Save visualization specifications with model name and filename in the metadata
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 clean_model_name = re.sub(r"[^\w\-]", "_", self.model_name)
+                
+                # Ensure responses directory exists
+                os.makedirs(self.responses_dir, exist_ok=True)
+                
                 viz_specs_file = os.path.join(
-                    self.responses_dir, f"viz_specs_{clean_model_name}_{timestamp}.json"
+                    self.responses_dir,
+                    f"viz_specs_{clean_model_name}_{timestamp}.json"
                 )
 
                 try:
+                    # Convert any non-serializable objects to strings
+                    serializable_metadata = {}
+                    for col, meta in column_metadata.items():
+                        serializable_metadata[str(col)] = {
+                            k: str(v) if not isinstance(v, (bool, int, float, list, dict)) else v
+                            for k, v in meta.items()
+                        }
+
+                    specs_data = {
+                        "timestamp": timestamp,
+                        "model": self.model_name,
+                        "provider": "local" if self.use_local else "api",
+                        "dataset_filename": filename,
+                        "column_metadata": serializable_metadata,
+                        "visualization_specs": validated_specs,
+                    }
+
                     with open(viz_specs_file, "w", encoding="utf-8") as f:
-                        json.dump(
-                            {
-                                "timestamp": timestamp,
-                                "model": self.model_name,
-                                "provider": "local" if self.use_local else "api",
-                                "dataset_filename": filename,  # Add filename to metadata
-                                "column_metadata": column_metadata,
-                                "visualization_specs": validated_specs,
-                            },
-                            f,
-                            indent=2,
-                            ensure_ascii=False,
-                        )
-                    logger.info(
-                        f"Saved visualization specifications to {viz_specs_file}"
-                    )
+                        json.dump(specs_data, f, indent=2, ensure_ascii=False, default=str)
+                    
+                    logger.info(f"Successfully saved visualization specifications to {viz_specs_file}")
+                    
+                    # Verify file was created
+                    if os.path.exists(viz_specs_file):
+                        logger.info(f"Verified: File exists at {viz_specs_file}")
+                        logger.info(f"File size: {os.path.getsize(viz_specs_file)} bytes")
+                    else:
+                        logger.error(f"File was not created at {viz_specs_file}")
+                        
                 except Exception as e:
-                    logger.error(
-                        f"Failed to save visualization specifications: {str(e)}",
-                        exc_info=True,
-                    )
+                    logger.error(f"Failed to save visualization specifications: {str(e)}", exc_info=True)
+                    logger.error(f"Attempted to save to: {viz_specs_file}")
 
                 return validated_specs
 
