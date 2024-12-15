@@ -40,8 +40,7 @@ jobs:
 
     - name: Check test pass ratio
       run: |
-        RATIO=$(python -c "import xml.etree.ElementTree as ET; tree=ET.parse('results.xml'); root=tree.getroot(); suite=root if root.tag=='testsuite' else root.find('testsuite'); tests=int(suite.get('tests','0')); failures=int(suite.get('failures','0')); errors=int(suite.get('errors','0')); skips=int(suite.get('skipped','0')); passed=tests-failures-errors-skips; print((passed/tests*100) if tests else 0)")        echo "Pass ratio: $RATIO%"
-        CHECK=$(echo "$RATIO < 70" | bc -l)
+        RATIO=$(python -c "import xml.etree.ElementTree as ET; tree=ET.parse('results.xml'); root=tree.getroot(); suite=root.find('testsuite') if root.tag=='testsuites' else root; tests=int((suite.get('tests') or '0')); failures=int((suite.get('failures') or '0')); errors=int((suite.get('errors') or '0')); skips=int((suite.get('skipped') or '0')); passed=tests-failures-errors-skips; print((passed/tests*100) if tests else 0)")        CHECK=$(echo "$RATIO < 70" | bc -l)
         if (( CHECK )); then
           echo "Test pass ratio ($RATIO%) is below threshold (70%)"
           exit 1
