@@ -42,6 +42,13 @@ Homepage = "https://github.com/pnmartinez/ai-dashboard-builder/"
 [project.scripts]
 ai_dashboard_builder = "ai_dashboard_builder.cli:main"
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+]
+
 [tool.ruff]
 line-length = 88
 
@@ -54,6 +61,15 @@ extend-ignore = ["E402"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.pytest]
+testpaths = ["src/ai_dashboard_builder/tests"]
+python_files = "test_*.py"
+addopts = "-v --cov=ai_dashboard_builder"
+
+[tool.coverage.run]
+source = ["ai_dashboard_builder"]
+omit = ["tests/*"]
 
 [build-system]
 requires = ["hatchling"]

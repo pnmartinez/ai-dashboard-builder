@@ -1,0 +1,90 @@
+# .github/workflows/run-tests.yml
+name: Run Tests
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov pytest-mock
+        pip install -e .
+
+    - name: Run tests with JUnit report
+      env:
+        OPENAI_API_KEY: dummy_key
+        ANTHROPIC_API_KEY: dummy_key
+        GROQ_API_KEY: dummy_key
+      run: |
+        pytest src/ai_dashboard_builder/tests/ -v --junitxml=results.xml
+
+
+    - name: Check test pass ratio
+      run: |
+        RATIO=$(python -c "import xml.etree.ElementTree as ET; tree=ET.parse('results.xml'); root=tree.getroot(); suite=root.find('testsuite') if root.tag=='testsuites' else root; tests=int((suite.get('tests') or '0')); failures=int((suite.get('failures') or '0')); errors=int((suite.get('errors') or '0')); skips=int((suite.get('skipped') or '0')); passed=tests-failures-errors-skips; print((passed/tests*100) if tests else 0)")
+        echo "Pass ratio: $RATIO%"
+        CHECK=$(echo "$RATIO < 70" | bc -l)        
+        if (( CHECK )); then
+          echo "Test pass ratio ($RATIO%) is below threshold (70%)"
+          exit 1
+        fi
+
+
+    # - name: Comment PR with test results
+    #   if: github.event_name == 'pull_request'
+    #   uses: actions/github-script@v7
+    #   with:
+    #     script: |
+    #       const fs = require('fs');
+    #       const xml = fs.readFileSync('results.xml', 'utf8');
+    #       const matchTests = xml.match(/tests="(\d+)"/);
+    #       const matchFailures = xml.match(/failures="(\d+)"/);
+    #       const matchErrors = xml.match(/errors="(\d+)"/);
+    #       const matchSkips = xml.match(/skipped="(\d+)"/) || ["", "0"];
+
+    #       const tests = parseInt(matchTests[1], 10);
+    #       const failures = parseInt(matchFailures[1], 10);
+    #       const errors = parseInt(matchErrors[1], 10);
+    #       const skips = parseInt(matchSkips[1], 10);
+    #       const passed = tests - failures - errors - skips;
+    #       const ratio = tests > 0 ? (passed / tests) * 100 : 0;
+
+    #       const comment = `## Test Results 🧪
+
+    #       - Python Version: ${{ matrix.python-version }}
+    #       - Tests Run: ${tests}
+    #       - Passed: ${passed}
+    #       - Failures: ${failures}
+    #       - Errors: ${errors}
+    #       - Skips: ${skips}
+    #       - Pass Ratio: ${ratio.toFixed(2)}%
+          
+    #       ${ratio < 70 ? '⚠️ Pass ratio is below 70% threshold!' : '✅ Pass ratio meets requirements'}
+    #       `;
+
+    #       github.rest.issues.createComment({
+    #         issue_number: context.issue.number,
+    #         owner: context.repo.owner,
+    #         repo: context.repo.name,
+    #         body: comment
+    #       });
+
