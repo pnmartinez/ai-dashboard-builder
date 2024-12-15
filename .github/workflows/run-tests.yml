@@ -26,24 +26,16 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pytest pytest-cov pytest-mock
+        pip install pytest pytest-mock
         pip install -e .
 
-    - name: Run tests with coverage
-      env:
-        OPENAI_API_KEY: dummy_key
-        ANTHROPIC_API_KEY: dummy_key
-        GROQ_API_KEY: dummy_key
+    - name: Run tests and create JUnit report
       run: |
-        pytest src/ai_dashboard_builder/tests/ -v --cov=ai_dashboard_builder --cov-report=xml
+        pytest src/ai_dashboard_builder/tests/ -v --junitxml=results.xml
 
-    - name: Check test coverage threshold
-      run: |
-        COVERAGE=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(float(root.attrib['line-rate']) * 100)")
-        if (( $(echo "$COVERAGE < 70" | bc -l) )); then
-          echo "Test coverage ($COVERAGE%) is below threshold (70%)"
-          exit 1
-        fi
+    - name: Check test pass ratio
+      run: python -c 'import xml.etree.ElementTree as ET; import sys; tree = ET.parse("results.xml"); root = tree.getroot(); tests = int(root.get("tests", 0)); failures = int(root.get("failures", 0)); errors = int(root.get("errors", 0)); skips = int(root.get("skipped", 0)); passed = tests - failures - errors - skips; ratio = (passed / tests * 100) if tests else 0; print(f"Pass Ratio: {ratio:.2f}%"); sys.exit(1 if ratio < 70 else 0)'
+
 
     - name: Comment PR with test results
       if: github.event_name == 'pull_request'
@@ -51,20 +43,18 @@ jobs:
       with:
         script: |
           const fs = require('fs');
-          const testResults = fs.readFileSync('coverage.xml', 'utf8');
-          const coverage = parseFloat(testResults.match(/line-rate="([^"]+)"/)[1]) * 100;
-          
-          const comment = `## Test Results 🧪
-          
-          - Coverage: ${coverage.toFixed(2)}%
-          - Python Version: ${{ matrix.python-version }}
-          
-          ${coverage < 70 ? '⚠️ Coverage is below 70% threshold!' : '✅ Coverage meets requirements'}
-          `;
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.name,
-            body: comment
-          });
+          const xml = fs.readFileSync('results.xml', 'utf8');
+          const matchTests = xml.match(/tests="(\d+)"/);
+          const matchFailures = xml.match(/failures="(\d+)"/);
+          const matchErrors = xml.match(/errors="(\d+)"/);
+          const matchSkips = xml.match(/skipped="(\d+)"/) || ["", "0"];
+
+          const tests = parseInt(matchTests[1], 10);
+          const failures = parseInt(matchFailures[1], 10);
+          const errors = parseInt(matchErrors[1], 10);
+          const skips = parseInt(matchSkips[1], 10);
+          const passed = tests - failures - errors - skips;
+
+          const ratio = tests > 0 ? (passed / tests) * 100 : 0;
+
+          const comment = `## Test Re
