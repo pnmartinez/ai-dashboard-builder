@@ -1176,10 +1176,40 @@ def analyze_data(
             else:
                 summary = None
 
-        set_progress(
-            html.Div("5/5 Rendering dashboard...", style={"color": COLORS["info"]})
-        )
+        # Initialize the benchmark system
+        from ai_dashboard_builder.benchmarking.dashboard_benchmark import DashboardBenchmark
+        benchmark = DashboardBenchmark(df)
 
+        # Get benchmark scores and relationships for each visualization
+        viz_scores = {}
+        viz_relationships = {}
+        for viz_id, viz_spec in viz_specs.items():
+            metrics = benchmark._evaluate_statistical_validity(viz_spec)
+            viz_appropriateness = benchmark._evaluate_visualization_appropriateness(viz_spec)
+            
+            # Get relationship info
+            x, y = viz_spec.get('x'), viz_spec.get('y')
+            relationship = benchmark._find_relationship(x, y) if x and y else None
+            
+            # Format relationship info for display
+            relationship_text = ""
+            if relationship:
+                rel_type = relationship['type']
+                if rel_type == 'numeric-numeric':
+                    relationship_text = f"Correlation: {relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
+                elif rel_type == 'cat-cat':
+                    relationship_text = f"Chi-square: {relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
+                elif rel_type == 'numeric-cat':
+                    relationship_text = f"F-statistic: {relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
+            
+            viz_scores[viz_id] = {
+                'statistical_validity': metrics,
+                'visualization_appropriateness': viz_appropriateness,
+                'overall': (metrics * 0.6 + viz_appropriateness * 0.4),
+                'relationship_text': relationship_text
+            }
+
+        # Create the visualization components with scores and relationships
         components = [
             dbc.Card(
                 [
@@ -1258,7 +1288,47 @@ def analyze_data(
                                                                                 config={
                                                                                     "displayModeBar": False
                                                                                 },
-                                                                            )
+                                                                            ),
+                                                                            # Add benchmark scores and relationship info
+                                                                            html.Div(
+                                                                                [
+                                                                                    html.Small(
+                                                                                        [
+                                                                                            html.Span(
+                                                                                                f"Overall Score: {viz_scores[list(figures.keys())[i]]['overall']:.2f}",
+                                                                                                style={
+                                                                                                    "fontWeight": "bold",
+                                                                                                    "color": COLORS["primary"],
+                                                                                                    "marginRight": "15px"
+                                                                                                }
+                                                                                            ),
+                                                                                            html.Span(
+                                                                                                f"Statistical Validity: {viz_scores[list(figures.keys())[i]]['statistical_validity']:.2f}",
+                                                                                                style={"marginRight": "15px"}
+                                                                                            ),
+                                                                                            html.Span(
+                                                                                                f"Visual Appropriateness: {viz_scores[list(figures.keys())[i]]['visualization_appropriateness']:.2f}",
+                                                                                            ),
+                                                                                            html.Br(),
+                                                                                            html.Span(
+                                                                                                viz_scores[list(figures.keys())[i]]['relationship_text'],
+                                                                                                style={
+                                                                                                    "color": COLORS["info"],
+                                                                                                    "fontSize": "0.9em",
+                                                                                                    "display": "inline-block",
+                                                                                                    "marginTop": "5px"
+                                                                                                } if viz_scores[list(figures.keys())[i]]['relationship_text'] else {"display": "none"}
+                                                                                            ),
+                                                                                        ],
+                                                                                        className="text-muted",
+                                                                                    ),
+                                                                                ],
+                                                                                style={
+                                                                                    "marginTop": "10px",
+                                                                                    "paddingTop": "5px",
+                                                                                    "borderTop": f"1px solid {COLORS['divider']}"
+                                                                                }
+                                                                            ),
                                                                         ],
                                                                         id={
                                                                             "type": "chart-content",
