@@ -1180,36 +1180,60 @@ def analyze_data(
         from ai_dashboard_builder.benchmarking.dashboard_benchmark import DashboardBenchmark
         benchmark = DashboardBenchmark(df)
 
-        # Get benchmark scores and relationships for each visualization
-        viz_scores = {}
+        # Get relationships for each visualization and store with sorting info
         viz_relationships = {}
+        viz_sorting_info = []
+        
         for viz_id, viz_spec in viz_specs.items():
-            metrics = benchmark._evaluate_statistical_validity(viz_spec)
-            viz_appropriateness = benchmark._evaluate_visualization_appropriateness(viz_spec)
-            
-            # Get relationship info
             x, y = viz_spec.get('x'), viz_spec.get('y')
             relationship = benchmark._find_relationship(x, y) if x and y else None
             
             # Format relationship info for display
             relationship_text = ""
+            sort_value = float('-inf')  # Default sort value for no relationship
+            
             if relationship:
                 rel_type = relationship['type']
+                p_value = relationship.get('p_value')
+                strength = relationship.get('strength', 0)
+                
+                # Calculate sort value based on significance and strength
+                if p_value is not None:
+                    # Combine p-value and strength for sorting
+                    # Lower p-values and higher strength are better
+                    sort_value = (-float(p_value)) * abs(float(strength))
+                
                 if rel_type == 'numeric-numeric':
-                    relationship_text = f"Correlation: {relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
+                    relationship_text = f"Relationship: {relationship['columns'][0]} and {relationship['columns'][1]} have a correlation of {relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
                 elif rel_type == 'cat-cat':
-                    relationship_text = f"Chi-square: {relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
+                    relationship_text = f"Association: Chi-square test between {relationship['columns'][0]} and {relationship['columns'][1]} shows χ²={relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
                 elif rel_type == 'numeric-cat':
-                    relationship_text = f"F-statistic: {relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
+                    relationship_text = f"Group differences: ANOVA between {relationship['columns'][0]} and {relationship['columns'][1]} shows F={relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
             
-            viz_scores[viz_id] = {
-                'statistical_validity': metrics,
-                'visualization_appropriateness': viz_appropriateness,
-                'overall': (metrics * 0.6 + viz_appropriateness * 0.4),
-                'relationship_text': relationship_text
+            viz_relationships[viz_id] = {
+                'text': relationship_text,
+                'significance': relationship['p_value'] < 0.05 if relationship and relationship['p_value'] is not None else False
             }
+            
+            # Store sorting info
+            viz_sorting_info.append({
+                'viz_id': viz_id,
+                'sort_value': sort_value,
+                'figure': figures.get(viz_id)
+            })
+        
+        # Sort visualizations by significance and strength
+        viz_sorting_info.sort(key=lambda x: x['sort_value'], reverse=True)
+        
+        # Reorder figures based on sorting
+        sorted_figures = {
+            item['viz_id']: item['figure']
+            for item in viz_sorting_info
+            if item['figure'] is not None
+        }
+        figures = sorted_figures
 
-        # Create the visualization components with scores and relationships
+        # Create the visualization components with relationships (now sorted)
         components = [
             dbc.Card(
                 [
@@ -1289,44 +1313,25 @@ def analyze_data(
                                                                                     "displayModeBar": False
                                                                                 },
                                                                             ),
-                                                                            # Add benchmark scores and relationship info
+                                                                            # Add relationship info
                                                                             html.Div(
                                                                                 [
                                                                                     html.Small(
-                                                                                        [
-                                                                                            html.Span(
-                                                                                                f"Overall Score: {viz_scores[list(figures.keys())[i]]['overall']:.2f}",
-                                                                                                style={
-                                                                                                    "fontWeight": "bold",
-                                                                                                    "color": COLORS["primary"],
-                                                                                                    "marginRight": "15px"
-                                                                                                }
-                                                                                            ),
-                                                                                            html.Span(
-                                                                                                f"Statistical Validity: {viz_scores[list(figures.keys())[i]]['statistical_validity']:.2f}",
-                                                                                                style={"marginRight": "15px"}
-                                                                                            ),
-                                                                                            html.Span(
-                                                                                                f"Visual Appropriateness: {viz_scores[list(figures.keys())[i]]['visualization_appropriateness']:.2f}",
-                                                                                            ),
-                                                                                            html.Br(),
-                                                                                            html.Span(
-                                                                                                viz_scores[list(figures.keys())[i]]['relationship_text'],
-                                                                                                style={
-                                                                                                    "color": COLORS["info"],
-                                                                                                    "fontSize": "0.9em",
-                                                                                                    "display": "inline-block",
-                                                                                                    "marginTop": "5px"
-                                                                                                } if viz_scores[list(figures.keys())[i]]['relationship_text'] else {"display": "none"}
-                                                                                            ),
-                                                                                        ],
-                                                                                        className="text-muted",
+                                                                                        viz_relationships[list(figures.keys())[i]]['text'],
+                                                                                        style={
+                                                                                            "color": COLORS["primary"] if viz_relationships[list(figures.keys())[i]]['significance'] else COLORS["text_secondary"],
+                                                                                            "fontStyle": "italic",
+                                                                                            "display": "block",
+                                                                                            "marginTop": "8px",
+                                                                                            "padding": "8px",
+                                                                                            "backgroundColor": f"{COLORS['background']}",
+                                                                                            "borderRadius": "4px",
+                                                                                            "border": f"1px solid {COLORS['divider']}"
+                                                                                        } if viz_relationships[list(figures.keys())[i]]['text'] else {"display": "none"}
                                                                                     ),
                                                                                 ],
                                                                                 style={
                                                                                     "marginTop": "10px",
-                                                                                    "paddingTop": "5px",
-                                                                                    "borderTop": f"1px solid {COLORS['divider']}"
                                                                                 }
                                                                             ),
                                                                         ],
