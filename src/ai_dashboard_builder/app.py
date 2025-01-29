@@ -314,12 +314,16 @@ app.layout = html.Div(
                                                                 "value": "mixtral-8x7b-32768",
                                                             },
                                                             {
-                                                                "label": "Groq Llama 3.1 70b",
-                                                                "value": "llama-3.1-70b-versatile",
+                                                                "label": "Groq Llama 3.3 70b",
+                                                                "value": "llama-3.3-70b-specdec",
                                                             },
                                                             {
                                                                 "label": "Groq Gemma 7B",
                                                                 "value": "gemma-7b-it",
+                                                            },
+                                                            {
+                                                                "label": "Groq Deepseek 70B",
+                                                                "value": "deepseek-r1-distill-llama-70b",
                                                             },
                                                         ],
                                                         value="gpt-4o-mini",
@@ -902,19 +906,30 @@ def toggle_viz_specs_modal(
                         formatted_timestamp = timestamp_str
                         timestamp = datetime.min
 
+                    # Get benchmark scores if available
+                    benchmark_scores = specs.get("benchmark_scores", {})
+                    overall_score = benchmark_scores.get("overall_score", None)
+                    statistical_validity = benchmark_scores.get("statistical_validity", None)
+                    visualization_appropriateness = benchmark_scores.get("visualization_appropriateness", None)
+                    insight_value = benchmark_scores.get("insight_value", None)
+                    data_coverage = benchmark_scores.get("data_coverage", None)
+
                     file_list.append(
                         {
-                            "path": os.path.relpath(
-                                file_path, BASE_DIR
-                            ),  # Store relative path
+                            "path": os.path.relpath(file_path, BASE_DIR),
                             "timestamp": timestamp,
                             "display_data": {
                                 "timestamp": formatted_timestamp,
                                 "model": specs.get("model", "Unknown"),
                                 "provider": specs.get("provider", "Unknown"),
-                                "dataset_filename": specs.get(
-                                    "dataset_filename", "Unknown dataset"
-                                ),
+                                "dataset_filename": specs.get("dataset_filename", "Unknown dataset"),
+                                "scores": {
+                                    "overall": overall_score,
+                                    "statistical_validity": statistical_validity,
+                                    "visualization_appropriateness": visualization_appropriateness,
+                                    "insight_value": insight_value,
+                                    "data_coverage": data_coverage
+                                }
                             },
                         }
                     )
@@ -938,6 +953,32 @@ def toggle_viz_specs_modal(
                                     f"Model: {item['display_data']['model']} ({item['display_data']['provider']})",
                                     html.Br(),
                                     f"For dataset: {item['display_data']['dataset_filename']}",
+                                    html.Br(),
+                                    html.Div([
+                                        html.Strong("Benchmark Scores:", className="mt-2"),
+                                        html.Div([
+                                            html.Span(
+                                                f"Overall: {item['display_data']['scores']['overall']:.2f}" if item['display_data']['scores']['overall'] is not None else "Overall: N/A",
+                                                style={"marginRight": "10px", "color": "#28a745"}
+                                            ),
+                                            html.Span(
+                                                f"Statistical Validity: {item['display_data']['scores']['statistical_validity']:.2f}" if item['display_data']['scores']['statistical_validity'] is not None else "Statistical Validity: N/A",
+                                                style={"marginRight": "10px"}
+                                            ),
+                                            html.Span(
+                                                f"Visualization Appropriateness: {item['display_data']['scores']['visualization_appropriateness']:.2f}" if item['display_data']['scores']['visualization_appropriateness'] is not None else "Visualization Appropriateness: N/A",
+                                                style={"marginRight": "10px"}
+                                            ),
+                                            html.Br(),
+                                            html.Span(
+                                                f"Insight Value: {item['display_data']['scores']['insight_value']:.2f}" if item['display_data']['scores']['insight_value'] is not None else "Insight Value: N/A",
+                                                style={"marginRight": "10px"}
+                                            ),
+                                            html.Span(
+                                                f"Data Coverage: {item['display_data']['scores']['data_coverage']:.2f}" if item['display_data']['scores']['data_coverage'] is not None else "Data Coverage: N/A",
+                                            ),
+                                        ], style={"fontSize": "0.85em", "color": "#666"})
+                                    ]) if any(score is not None for score in item['display_data']['scores'].values()) else None
                                 ],
                                 className="text-muted",
                             ),
@@ -1056,22 +1097,6 @@ def analyze_data(
         if provider == "external" and not api_key:
             raise ValueError("API key is required for external provider")
 
-        # Set the appropriate environment variable based on the model
-        if api_key:
-            key_var = None
-            if "gpt" in model.lower():
-                key_var = "OPENAI_API_KEY"
-            elif "claude" in model.lower():
-                key_var = "ANTHROPIC_API_KEY"
-            elif "mistral" in model.lower():
-                key_var = "MISTRAL_API_KEY"
-            elif any(name in model.lower() for name in ["mixtral", "groq", "llama", "gemma"]):
-                key_var = "GROQ_API_KEY"
-            
-            if key_var:
-                os.environ[key_var] = api_key
-                logger.info(f"Set {key_var} from UI input")
-
         data_store = json.loads(json_data)
         df_full = pd.read_json(io.StringIO(data_store["full_data"]), orient="split")
         filename = data_store.get("filename", "unknown_file")
@@ -1083,7 +1108,7 @@ def analyze_data(
             set_progress(
                 html.Div(
                     "Using imported visualization specifications...",
-                    style={"color": COLORS["info"]},
+                    style={"color": COLORS["info"]}
                 )
             )
             viz_specs = imported_viz_specs
@@ -1099,7 +1124,8 @@ def analyze_data(
 
             set_progress(
                 html.Div(
-                    "Initializing analysis pipeline...", style={"color": COLORS["info"]}
+                    "Initializing analysis pipeline...", 
+                    style={"color": COLORS["info"]}
                 )
             )
 
@@ -1113,7 +1139,7 @@ def analyze_data(
                 set_progress(
                     html.Div(
                         "1/5 Analyzing dataset... (Rate limiting in effect)",
-                        style={"color": COLORS["info"]},
+                        style={"color": COLORS["info"]}
                     )
                 )
                 analysis = pipeline.analyze_dataset(df, kpis)
@@ -1123,7 +1149,7 @@ def analyze_data(
             set_progress(
                 html.Div(
                     "2/5 Generating visualization suggestions... (Rate limiting in effect)",
-                    style={"color": COLORS["info"]},
+                    style={"color": COLORS["info"]}
                 )
             )
             viz_specs = pipeline.suggest_visualizations(df, kpis, filename=filename)
@@ -1132,7 +1158,8 @@ def analyze_data(
 
             set_progress(
                 html.Div(
-                    "3/5 Creating visualizations...", style={"color": COLORS["info"]}
+                    "3/5 Creating visualizations...", 
+                    style={"color": COLORS["info"]}
                 )
             )
             dashboard_builder = DashboardBuilder(df, COLORS)
@@ -1142,7 +1169,7 @@ def analyze_data(
                 set_progress(
                     html.Div(
                         "4/5 Generating insights summary... (Rate limiting in effect)",
-                        style={"color": COLORS["info"]},
+                        style={"color": COLORS["info"]}
                     )
                 )
                 summary = pipeline.summarize_analysis(analysis, viz_specs)
@@ -1220,7 +1247,6 @@ def analyze_data(
                                                         [
                                                             html.Div(
                                                                 [
-                                                                    # Chart content
                                                                     html.Div(
                                                                         [
                                                                             dcc.Graph(
@@ -1240,7 +1266,6 @@ def analyze_data(
                                                                         },
                                                                         className="chart-container",
                                                                     ),
-                                                                    # Code content
                                                                     html.Div(
                                                                         [
                                                                             html.Pre(
@@ -1292,69 +1317,43 @@ def analyze_data(
                     ),
                 ],
                 className="mb-4",
-            ),
-            dbc.Modal(
-                [
-                    dbc.ModalHeader(dbc.ModalTitle("Expanded View")),
-                    dbc.ModalBody(
-                        dcc.Graph(
-                            id="modal-figure",
-                            config={"displayModeBar": True},
-                            style={
-                                "height": "calc(80vh - 60px)",  # Modal height minus header
-                                "width": "100%",
-                            },
-                        ),
-                        style={
-                            "padding": "0px"
-                        },  # Remove default padding to maximize space
-                    ),
-                ],
-                id="figure-modal",
-                size="xl",
-                is_open=False,
-                style={"maxWidth": "95vw", "width": "95vw"},
-            ),
+            )
         ]
 
         if include_text and analysis and summary:
-            components.extend(
-                [
-                    dbc.Card(
-                        [
-                            dbc.CardHeader(html.H3("Key Insights", className="mb-0")),
-                            dbc.CardBody(
-                                dcc.Markdown(
-                                    summary,
-                                    style={
-                                        "backgroundColor": COLORS["background"],
-                                        "padding": "1rem",
-                                        "borderRadius": "5px",
-                                    },
-                                )
-                            ),
-                        ],
-                        className="mb-4",
-                    ),
-                    dbc.Card(
-                        [
-                            dbc.CardHeader(
-                                html.H3("Dataset Analysis", className="mb-0")
-                            ),
-                            dbc.CardBody(
-                                dcc.Markdown(
-                                    analysis,
-                                    style={
-                                        "backgroundColor": COLORS["background"],
-                                        "padding": "1rem",
-                                        "borderRadius": "5px",
-                                    },
-                                )
-                            ),
-                        ]
-                    ),
-                ]
-            )
+            components.extend([
+                dbc.Card(
+                    [
+                        dbc.CardHeader(html.H3("Key Insights", className="mb-0")),
+                        dbc.CardBody(
+                            dcc.Markdown(
+                                summary,
+                                style={
+                                    "backgroundColor": COLORS["background"],
+                                    "padding": "1rem",
+                                    "borderRadius": "5px",
+                                },
+                            )
+                        ),
+                    ],
+                    className="mb-4",
+                ),
+                dbc.Card(
+                    [
+                        dbc.CardHeader(html.H3("Dataset Analysis", className="mb-0")),
+                        dbc.CardBody(
+                            dcc.Markdown(
+                                analysis,
+                                style={
+                                    "backgroundColor": COLORS["background"],
+                                    "padding": "1rem",
+                                    "borderRadius": "5px",
+                                },
+                            )
+                        ),
+                    ]
+                ),
+            ])
 
         return html.Div(components), True, json.dumps(data_store)
 
