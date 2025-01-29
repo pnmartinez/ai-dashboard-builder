@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+from ..benchmarking import DashboardBenchmark
 from ai_dashboard_builder.llm import prompts
 from ai_dashboard_builder.utils.paths import get_root_path
 
@@ -922,6 +923,31 @@ class LLMPipeline:
                 except Exception as e:
                     logger.error(f"Failed to save visualization specifications: {str(e)}", exc_info=True)
                     logger.error(f"Attempted to save to: {viz_specs_file}")
+
+                # Add this before returning validated_specs
+                try:
+                    benchmark = DashboardBenchmark(df)
+                    metrics = benchmark.evaluate_dashboard(list(validated_specs.values()))
+                    
+                    # Add benchmark scores to the specs_data
+                    specs_data["benchmark_scores"] = {
+                        'overall_score': metrics.overall_score(),
+                        'statistical_validity': metrics.statistical_validity,
+                        'visualization_appropriateness': metrics.visualization_appropriateness,
+                        'insight_value': metrics.insight_value,
+                        'data_coverage': metrics.data_coverage
+                    }
+                    
+                    # Update the JSON file with benchmark scores
+                    with open(viz_specs_file, "r", encoding="utf-8") as f:
+                        existing_data = json.load(f)
+                    existing_data.update(specs_data)  # or merge data as needed
+                    with open(viz_specs_file, "w", encoding="utf-8") as f:
+                        json.dump(existing_data, f, indent=2, ensure_ascii=False, default=str)
+                    logger.info(f"Dashboard benchmark scores: {specs_data['benchmark_scores']}")
+                    
+                except Exception as e:
+                    logger.error(f"Error in dashboard benchmarking: {str(e)}", exc_info=True)
 
                 return validated_specs
 
