@@ -34,25 +34,25 @@ class VisualizationType(Enum):
 
 @dataclass
 class BenchmarkMetrics:
-    statistical_validity: float  # 0-1 score
-    visualization_appropriateness: float  # 0-1 score
-    insight_value: float  # 0-1 score
-    data_coverage: float  # 0-1 score
+    validity: float  # 0-1 score for technical correctness
+    relevance: float  # 0-1 score for justification clarity
+    usefulness: float  # 0-1 score for actionable insights
+    diversity: float  # 0-1 score for visualization diversity
+    redundancy: float  # 0-1 score for redundancy penalty
     
     def overall_score(self) -> float:
-        # Adjust weights or turn this into a multi-objective approach as needed
-        weights = {
-            'statistical_validity': 0.4,
-            'visualization_appropriateness': 0.3,
-            'insight_value': 0.2,
-            'data_coverage': 0.1
-        }
-        return (
-            self.statistical_validity * weights['statistical_validity'] +
-            self.visualization_appropriateness * weights['visualization_appropriateness'] +
-            self.insight_value * weights['insight_value'] +
-            self.data_coverage * weights['data_coverage']
+        # Weights based on the proposed architecture:
+        # 60% for individual chart quality (split among validity, relevance, usefulness)
+        # 30% for diversity
+        # 10% for redundancy penalty
+        individual_quality = (self.validity + self.relevance + self.usefulness) / 3
+        
+        overall = (
+            0.6 * individual_quality +
+            0.3 * self.diversity -
+            0.1 * self.redundancy
         )
+        return max(min(overall, 1.0), 0.0)  # Ensure score is between 0 and 1
 
 class DashboardBenchmark:
     def __init__(self, df: pd.DataFrame, output_dir: str = None):
@@ -82,6 +82,7 @@ class DashboardBenchmark:
             self.logger.warning("scipy not available - skipping relationship analysis")
             return []
 
+        MIN_SAMPLE_SIZE = 2  # Minimum sample size for statistical tests
         relationships = []
         cols = self.df.columns
         for col1, col2 in combinations(cols, 2):
@@ -93,7 +94,7 @@ class DashboardBenchmark:
                 'type': None,
                 'stat': None, 
                 'p_value': None,
-                'strength': 0.0  # you could use absolute correlation or mutual info, etc.
+                'strength': 0.0
             }
 
             try:
@@ -101,50 +102,60 @@ class DashboardBenchmark:
                     # Numeric-numeric: compute Pearson & Spearman
                     data1 = self.df[col1].dropna()
                     data2 = self.df[col2].dropna()
-
-                    if len(data1) > 1 and len(data2) > 1:
-                        pearson_r, pearson_p = pearsonr(data1, data2)
-                        spearman_r, spearman_p = spearmanr(data1, data2)
-                        self.logger.debug(f"Pearson correlation: {pearson_r:.3f} (p={pearson_p:.3f})")
-                        rel['type'] = 'numeric-numeric'
-                        rel['stat'] = pearson_r
-                        rel['p_value'] = pearson_p
-                        rel['strength'] = abs(pearson_r)
+                    
+                    # Check sample size
+                    if len(data1) >= MIN_SAMPLE_SIZE and len(data2) >= MIN_SAMPLE_SIZE:
+                        # Ensure both arrays have the same length
+                        common_index = data1.index.intersection(data2.index)
+                        if len(common_index) >= MIN_SAMPLE_SIZE:
+                            data1 = data1[common_index]
+                            data2 = data2[common_index]
+                            pearson_r, pearson_p = pearsonr(data1, data2)
+                            spearman_r, spearman_p = spearmanr(data1, data2)
+                            self.logger.debug(f"Pearson correlation: {pearson_r:.3f} (p={pearson_p:.3f})")
+                            rel['type'] = 'numeric-numeric'
+                            rel['stat'] = pearson_r
+                            rel['p_value'] = pearson_p
+                            rel['strength'] = abs(pearson_r)
                 else:
                     # At least one is categorical
                     col1_is_cat = col1 in self.categorical_cols
                     col2_is_cat = col2 in self.categorical_cols
-                    # For numeric-categorical: can do ANOVA, or compare means across categories, etc.
-                    # For cat-cat: can do chi-square
+                    
                     if col1_is_cat and col2_is_cat:
-                        contingency = pd.crosstab(self.df[col1], self.df[col2])
-                        chi2, p, _, _ = chi2_contingency(contingency)
-                        rel['type'] = 'cat-cat'
-                        rel['stat'] = chi2
-                        rel['p_value'] = p
-                        rel['strength'] = chi2  # or a normalized measure
+                        # Remove NaN values and ensure common indices
+                        data = self.df[[col1, col2]].dropna()
+                        if len(data) >= MIN_SAMPLE_SIZE:
+                            contingency = pd.crosstab(data[col1], data[col2])
+                            if contingency.size > 1:  # Ensure we have at least 2 categories
+                                chi2, p, _, _ = chi2_contingency(contingency)
+                                rel['type'] = 'cat-cat'
+                                rel['stat'] = chi2
+                                rel['p_value'] = p
+                                rel['strength'] = chi2  # or a normalized measure
                     else:
-                        # numeric-categorical: one approach is ANOVA or Kruskal-Wallis
+                        # numeric-categorical
                         numeric_col = col1 if col1_is_num else col2
                         cat_col = col2 if col1_is_num else col1
                         data = self.df[[numeric_col, cat_col]].dropna()
-                        if data[cat_col].nunique() > 1:
-                            # Example: one-way ANOVA
-                            groups = [d for _, d in data.groupby(cat_col)[numeric_col]]
-                            if len(groups) > 1:
+                        
+                        if len(data) >= MIN_SAMPLE_SIZE:
+                            # Group data and check if we have enough samples per group
+                            groups = [group for name, group in data.groupby(cat_col)[numeric_col] if len(group) >= MIN_SAMPLE_SIZE]
+                            if len(groups) >= 2:  # Need at least 2 groups for ANOVA
                                 try:
                                     f_stat, p_val = stats.f_oneway(*groups)
-                                    rel['type'] = 'numeric-cat'
-                                    rel['stat'] = f_stat
-                                    rel['p_value'] = p_val
-                                    rel['strength'] = abs(f_stat)
-                                except:
-                                    pass
+                                    if not np.isnan(f_stat):  # Check if the result is valid
+                                        rel['type'] = 'numeric-cat'
+                                        rel['stat'] = f_stat
+                                        rel['p_value'] = p_val
+                                        rel['strength'] = abs(f_stat)
+                                except Exception as e:
+                                    self.logger.debug(f"ANOVA failed: {str(e)}")
 
             except Exception as e:
                 self.logger.error(f"Error analyzing relationship between {col1} and {col2}: {str(e)}")
 
-            # You could do a multiple testing correction across all pairs
             relationships.append(rel)
         
         self.logger.info(f"Completed relationship analysis. Found {len(relationships)} relationships")
@@ -171,51 +182,6 @@ class DashboardBenchmark:
             json.dump(relationships_data, f, indent=2)
         self.logger.info(f"Stored relationships data in {output_path}")
 
-    def _evaluate_statistical_validity(self, viz_spec: Dict) -> float:
-        """Evaluate statistical validity of visualization with deeper checks."""
-        self.logger.debug(f"Evaluating statistical validity for visualization: {viz_spec['type']}")
-        score = 1.0
-        viz_type = VisualizationType(viz_spec['type'])
-        x, y = viz_spec.get('x'), viz_spec.get('y')
-
-        # If numeric-numeric, check if we have correlation data
-        if x in self.numeric_cols and y in self.numeric_cols:
-            # Look up the precomputed relationship
-            rel = self._find_relationship(x, y)
-            if rel and SCIPY_AVAILABLE:
-                # If distribution is strongly non-normal, using Pearson might be suboptimal
-                # We'll do a quick normality check again for demonstration
-                try:
-                    _, p_value_x = stats.shapiro(self.df[x].dropna())
-                    _, p_value_y = stats.shapiro(self.df[y].dropna())
-                    if p_value_x < 0.05 or p_value_y < 0.05:
-                        # If the chart claims Pearson correlation explicitly, penalize
-                        if 'pearson' in viz_spec.get('description', '').lower():
-                            score *= 0.8
-                except:
-                    pass
-
-                # If there's a strong correlation but the chart doesn't mention it, we might penalize
-                # or if the chart is scatter with no mention of correlation, we might just do a small penalty
-                if viz_type == VisualizationType.SCATTER and abs(rel['stat']) > 0.7:
-                    desc = viz_spec.get('description', '').lower()
-                    if 'correlation' not in desc and 'relationship' not in desc:
-                        score *= 0.9  # missed an opportunity to mention strong relationship
-
-        # For numeric-categorical, if using bar chart, check if an aggregation is present
-        if viz_type == VisualizationType.BAR:
-            if x in self.numeric_cols and not viz_spec.get('parameters', {}).get('aggregation'):
-                score *= 0.8  # Penalty for using bar plot with raw numeric data
-
-        # For pie charts with many categories
-        if viz_type == VisualizationType.PIE and x in self.categorical_cols:
-            n_categories = self.df[x].nunique()
-            if n_categories > 7:
-                score *= 0.6  # Penalty for pie chart with too many categories
-
-        self.logger.debug(f"Statistical validity score: {score}")
-        return score
-
     def _find_relationship(self, col1: str, col2: str) -> Optional[Dict]:
         """Return the precomputed relationship dict for (col1, col2) if it exists."""
         for rel in self.relationships:
@@ -223,119 +189,286 @@ class DashboardBenchmark:
                 return rel
         return None
 
-    def _evaluate_visualization_appropriateness(self, viz_spec: Dict) -> float:
-        """Evaluate if visualization type is appropriate for the data."""
+    def _evaluate_chart_validity(self, chart: Dict) -> float:
+        """
+        Evaluate if the visualization type is coherent with the data types.
+        Returns a score between 0 and 1.
+        """
         score = 1.0
-        viz_type = VisualizationType(viz_spec['type'])
-        x, y = viz_spec.get('x'), viz_spec.get('y')
+        chart_type = VisualizationType(chart.get('type', ''))
+        x, y = chart.get('x'), chart.get('y')
         
-        # Example: line chart for time series
-        if viz_type == VisualizationType.LINE:
-            if x not in self.datetime_cols and y not in self.datetime_cols:
-                score *= 0.7  # penalty for line plot without time dimension
+        # Check if columns exist
+        if not x or x not in self.df.columns:
+            return 0.0
+        if chart_type not in [VisualizationType.HISTOGRAM, VisualizationType.PIE] and (not y or y not in self.df.columns):
+            return 0.0
 
-        # Example: histogram for numeric data
-        if viz_type == VisualizationType.HISTOGRAM and x not in self.numeric_cols:
-            score *= 0.5
-
+        # Evaluate based on chart type and data types
+        if chart_type == VisualizationType.HISTOGRAM:
+            if x not in self.numeric_cols:
+                score *= 0.5
+        elif chart_type == VisualizationType.LINE:
+            # Line charts are valid for any ordered/continuous data
+            # At least one axis should be numeric for meaningful trends
+            if y not in self.numeric_cols:
+                score *= 0.5
+            # Small penalty if neither axis represents order (datetime or numeric)
+            if x not in self.datetime_cols and x not in self.numeric_cols:
+                score *= 0.9
+        elif chart_type == VisualizationType.BAR:
+            if x not in self.categorical_cols and y not in self.numeric_cols:
+                score *= 0.7
+            if x in self.numeric_cols and not chart.get('parameters', {}).get('aggregation'):
+                score *= 0.8
+        elif chart_type == VisualizationType.PIE:
+            if x not in self.categorical_cols:
+                score *= 0.5
+            if x in self.categorical_cols and self.df[x].nunique() > 7:
+                score *= 0.6
+        elif chart_type == VisualizationType.SCATTER:
+            if x not in self.numeric_cols or y not in self.numeric_cols:
+                score *= 0.5
+            # Check correlation if both numeric
+            if x in self.numeric_cols and y in self.numeric_cols:
+                rel = self._find_relationship(x, y)
+                if rel and abs(rel['stat']) > 0.7:
+                    desc = chart.get('description', '').lower()
+                    if 'correlation' not in desc and 'relationship' not in desc:
+                        score *= 0.9
+        
         return score
 
-    def _evaluate_relationship_coverage(self, viz_specs: List[Dict]) -> float:
+    def _evaluate_chart_relevance(self, chart: Dict) -> float:
         """
-        Check if the strongest relationships in the dataset are actually visualized 
-        (and visualized with an appropriate chart). 
-        Return a coverage ratio or insight-like score in [0..1].
+        Evaluate the justification and relevance of the chart description.
+        Uses a multi-faceted approach considering context, chart type, and content quality.
+        Returns a score between 0 and 1.
         """
-        self.logger.debug("Evaluating relationship coverage")
-        if not self.relationships:
-            self.logger.warning("No relationships available for coverage evaluation")
-            return 0.5
-
-        # 1) Filter to top relationships by 'strength'
-        #    For demonstration, let's define "interesting" as top 5 with strength > threshold
-        sorted_rels = sorted(self.relationships, key=lambda r: r['strength'], reverse=True)
-        interesting_rels = [r for r in sorted_rels if r['strength'] > 0.3][:5]
-        self.logger.debug(f"Interesting relationships: {interesting_rels}")
-
-        # 2) Check how many of these interesting relationships are visualized
-        covered = 0
-        for rel in interesting_rels:
-            (c1, c2) = rel['columns']
-            found_viz = False
-            appropriate_viz = False
-            for spec in viz_specs:
-                x, y = spec.get('x'), spec.get('y')
-                if {x, y} == {c1, c2}:
-                    found_viz = True
-                    # Check if the chart type is appropriate
-                    if rel['type'] == 'numeric-numeric':
-                        # Scatter or possibly line if one is time
-                        if spec['type'] in [VisualizationType.SCATTER.value, VisualizationType.LINE.value]:
-                            appropriate_viz = True
-                    elif rel['type'] == 'numeric-cat':
-                        # Box plot, violin, or bar with aggregation might be good
-                        if spec['type'] in [VisualizationType.BOX.value, VisualizationType.VIOLIN.value]:
-                            appropriate_viz = True
-                    elif rel['type'] == 'cat-cat':
-                        # Stacked bar or heatmap might be typical
-                        if spec['type'] in [VisualizationType.HEATMAP.value, VisualizationType.BAR.value]:
-                            appropriate_viz = True
-                    if appropriate_viz:
-                        covered += 1
-                    break
-            # If we found a relevant viz but it wasn't truly appropriate, you might do partial credit
-
-        coverage_ratio = covered / len(interesting_rels) if interesting_rels else 1.0
-        self.logger.info(f"Relationship coverage score: {coverage_ratio:.2f}")
-        return coverage_ratio
-
-    def _evaluate_insight_value(self, viz_specs: List[Dict]) -> float:
-        """Evaluate the potential insight value. Incorporate relationship coverage."""
-        base_scores = []
-        for spec in viz_specs:
-            score = 1.0
-            description = spec.get('description', '').lower()
-            # Check for meaningful analysis in description
-            if 'trend' in description or 'pattern' in description:
-                score *= 1.1
-            if 'correlation' in description or 'relationship' in description:
-                score *= 1.1
-            if 'outlier' in description or 'anomaly' in description:
-                score *= 1.1
-            base_scores.append(min(score, 1.0))
-
-        # Average textual/heuristic insight
-        if base_scores:
-            textual_insight = np.mean(base_scores)
-        else:
-            textual_insight = 0.5
-
-        # Relationship coverage: how many strong relationships are properly shown
-        rel_coverage = self._evaluate_relationship_coverage(viz_specs)
-
-        # Combine them: you could weigh them differently. Example:
-        # 70% textual insight, 30% coverage
-        combined_insight = 0.7 * textual_insight + 0.3 * rel_coverage
-        return combined_insight
-
-    def _evaluate_data_coverage(self, viz_specs: List[Dict]) -> float:
-        """Evaluate how well the visualizations cover columns (basic coverage)."""
-        covered_cols = set()
-        for spec in viz_specs:
-            covered_cols.add(spec.get('x'))
-            covered_cols.add(spec.get('y'))
-            covered_cols.add(spec.get('color'))
+        description = chart.get('description', '').lower().strip()
+        if not description:
+            return 0.0
         
-        covered_cols.discard(None)
-        # Basic ratio
-        coverage_ratio = len(covered_cols) / len(self.df.columns)
-        return min(coverage_ratio, 1.0)
+        score = 0.0
+        words = description.split()
+        
+        # 1. Base Content Quality (30% of score)
+        content_score = 0.0
+        
+        # Check for minimum meaningful content
+        if len(words) >= 10:
+            content_score += 0.15
+        if len(words) >= 20:
+            content_score += 0.15
+            
+        # Check for data-specific terms (column names, values)
+        columns = [col for col in [chart.get('x'), chart.get('y'), chart.get('color')] if col]
+        if any(col.lower() in description for col in columns):
+            content_score += 0.3
+            
+        # Check for quantitative details
+        has_numbers = any(char.isdigit() for char in description)
+        if has_numbers:
+            content_score += 0.2
+            
+        # Check for units or specific measures
+        measurement_terms = ['percent', '%', 'average', 'mean', 'median', 'total', 'sum', 'count']
+        if any(term in description for term in measurement_terms):
+            content_score += 0.2
+            
+        score += min(content_score, 0.3)  # Cap at 30%
+        
+        # 2. Insight Type Relevance (40% of score)
+        insight_score = 0.0
+        chart_type = VisualizationType(chart.get('type', ''))
+        
+        # Define insight categories with weights and terms
+        insight_categories = {
+            'distribution': {
+                'weight': 1.0,
+                'terms': ['distribution', 'spread', 'range', 'variance', 'skew'],
+                'relevant_types': [VisualizationType.HISTOGRAM, VisualizationType.BOX, VisualizationType.VIOLIN]
+            },
+            'trend': {
+                'weight': 1.0,
+                'terms': ['trend', 'pattern', 'evolution', 'over time', 'increase', 'decrease', 'change'],
+                'relevant_types': [VisualizationType.LINE, VisualizationType.SCATTER]
+            },
+            'comparison': {
+                'weight': 1.0,
+                'terms': ['comparison', 'difference', 'versus', 'against', 'higher', 'lower', 'between'],
+                'relevant_types': [VisualizationType.BAR, VisualizationType.SCATTER]
+            },
+            'correlation': {
+                'weight': 1.0,
+                'terms': ['correlation', 'relationship', 'association', 'connected', 'linked'],
+                'relevant_types': [VisualizationType.SCATTER, VisualizationType.HEATMAP]
+            },
+            'composition': {
+                'weight': 1.0,
+                'terms': ['composition', 'breakdown', 'proportion', 'percentage', 'share', 'part'],
+                'relevant_types': [VisualizationType.PIE, VisualizationType.BAR]
+            }
+        }
+        
+        matched_categories = 0
+        total_weight = 0
+        
+        for category, info in insight_categories.items():
+            # Higher weight if the insight type matches the chart type
+            effective_weight = info['weight']
+            if chart_type in info['relevant_types']:
+                effective_weight *= 1.5
+                
+            if any(term in description for term in info['terms']):
+                matched_categories += effective_weight
+            total_weight += effective_weight
+        
+        if total_weight > 0:
+            insight_score = matched_categories / total_weight
+            score += min(insight_score * 0.4, 0.4)  # Cap at 40%
+        
+        # 3. Context and Relationship Quality (30% of score)
+        context_score = 0.0
+        
+        # Check for relationship context if applicable
+        if chart.get('x') and chart.get('y'):
+            rel = self._find_relationship(chart.get('x'), chart.get('y'))
+            if rel:
+                # If there's a significant relationship, check if it's mentioned
+                if rel['strength'] > 0.5:
+                    relationship_terms = []
+                    if rel['type'] == 'numeric-numeric':
+                        relationship_terms = ['correlation', 'relationship', 'associated']
+                    elif rel['type'] == 'numeric-cat':
+                        relationship_terms = ['difference', 'varies', 'depends']
+                    elif rel['type'] == 'cat-cat':
+                        relationship_terms = ['association', 'linked', 'connected']
+                        
+                    if any(term in description for term in relationship_terms):
+                        context_score += 0.15
+        
+        # Check for comparative context
+        comparative_terms = ['more than', 'less than', 'compared to', 'relative to', 'whereas']
+        if any(term in description for term in comparative_terms):
+            context_score += 0.15
+            
+        # Check for causation/explanation attempts
+        explanation_terms = ['because', 'due to', 'caused by', 'result of', 'leads to', 'suggests']
+        if any(term in description for term in explanation_terms):
+            context_score += 0.15
+            
+        # Check for business/domain relevance
+        business_terms = ['business', 'market', 'customer', 'revenue', 'cost', 'performance', 'growth']
+        if any(term in description for term in business_terms):
+            context_score += 0.15
+            
+        score += min(context_score, 0.3)  # Cap at 30%
+        
+        return min(score, 1.0)  # Ensure final score is between 0 and 1
+
+    def _evaluate_chart_usefulness(self, chart: Dict) -> float:
+        """
+        Evaluate if the visualization provides actionable insights.
+        Returns a score between 0 and 1.
+        """
+        insight = chart.get('insight', '').strip()
+        if not insight:
+            return 0.0
+        
+        score = 0.0
+        
+        # Basic length check
+        if len(insight) > 100:
+            score += 0.4
+        elif len(insight) > 50:
+            score += 0.2
+        
+        # Check for quantitative information
+        has_numbers = any(char.isdigit() for char in insight)
+        if has_numbers:
+            score += 0.3
+            
+        # Check for comparative language
+        comparative_terms = ['more', 'less', 'higher', 'lower', 'increase', 'decrease', 'compared']
+        if any(term in insight.lower() for term in comparative_terms):
+            score += 0.3
+            
+        return min(score, 1.0)
+
+    def _evaluate_dashboard_diversity(self, viz_specs: List[Dict]) -> float:
+        """
+        Evaluate if the dashboard covers different aspects of the dataset.
+        Returns a score between 0 and 1.
+        """
+        # Track coverage of different aspects
+        covered_types = set()  # data types covered
+        covered_cols = set()   # columns used
+        chart_types = set()    # visualization types used
+        
+        for spec in viz_specs:
+            # Add columns and their types
+            for col in [spec.get('x'), spec.get('y'), spec.get('color')]:
+                if col:
+                    covered_cols.add(col)
+                    if col in self.numeric_cols:
+                        covered_types.add('numeric')
+                    elif col in self.categorical_cols:
+                        covered_types.add('categorical')
+                    elif col in self.datetime_cols:
+                        covered_types.add('datetime')
+            
+            # Add chart type
+            if spec.get('type'):
+                chart_types.add(spec.get('type'))
+        
+        # Calculate scores for each aspect
+        type_coverage = len(covered_types) / 3  # max 3 types (numeric, categorical, datetime)
+        col_coverage = len(covered_cols) / len(self.df.columns)
+        chart_variety = len(chart_types) / len(VisualizationType)
+        
+        # Combine scores with weights
+        score = (0.4 * type_coverage + 0.3 * col_coverage + 0.3 * chart_variety)
+        return score
+
+    def _compute_redundancy_penalty(self, viz_specs: List[Dict]) -> float:
+        """
+        Calculate penalty for redundant visualizations.
+        Returns a score between 0 and 1 where higher means more redundancy.
+        """
+        seen = {}
+        penalty = 0.0
+        total_charts = len(viz_specs)
+        
+        # First pass: count occurrences of each unique visualization
+        for spec in viz_specs:
+            # Create a key based on chart type and columns used
+            key = (
+                spec.get('type', ''),
+                tuple(sorted([spec.get('x'), spec.get('y')]))
+            )
+            seen[key] = seen.get(key, 0) + 1
+        
+        # Calculate penalty based on duplicate counts
+        for key, count in seen.items():
+            if count > 1:
+                # Add a penalty proportional to the number of duplicates
+                # The penalty increases linearly with the number of duplicates
+                duplicate_count = count - 1  # Number of charts beyond the first one
+                penalty += 0.2 * duplicate_count / total_charts
+            
+            # Add smaller penalty for similar charts on same columns
+            for other_key in seen:
+                if key != other_key and key[1] == other_key[1]:  # Same columns, different chart type
+                    penalty += 0.1 / total_charts
+        
+        return min(penalty, 1.0)  # Cap penalty at 1.0
 
     def evaluate_dashboard(self, viz_specs: List[Dict], dashboard_id: str = None) -> BenchmarkMetrics:
         """Evaluate the entire dashboard and return benchmark metrics."""
         self.logger.info("Beginning dashboard evaluation")
         
-        # Store visualization-specific relationships
+        # Store visualization-specific relationships if dashboard_id is provided
         if dashboard_id:
             viz_relationships = []
             for i, spec in enumerate(viz_specs):
@@ -360,29 +493,35 @@ class DashboardBenchmark:
                 json.dump(viz_relationships, f, indent=2)
             self.logger.info(f"Stored visualization relationships in {viz_rel_path}")
 
-        # Statistical Validity
-        stat_validities = [self._evaluate_statistical_validity(spec) for spec in viz_specs]
-        statistical_validity = np.mean(stat_validities) if stat_validities else 0.5
-        self.logger.info(f"Statistical validity score: {statistical_validity:.2f}")
+        # Chart Validity
+        chart_validities = [self._evaluate_chart_validity(spec) for spec in viz_specs]
+        validity = np.mean(chart_validities) if chart_validities else 0.5
+        self.logger.info(f"Chart validity score: {validity:.2f}")
 
-        # Visualization Appropriateness
-        viz_appropriatenesses = [self._evaluate_visualization_appropriateness(spec) for spec in viz_specs]
-        visualization_appropriateness = np.mean(viz_appropriatenesses) if viz_appropriatenesses else 0.5
-        self.logger.info(f"Visualization appropriateness score: {visualization_appropriateness:.2f}")
-        
-        # Insight Value
-        insight_value = self._evaluate_insight_value(viz_specs)
-        self.logger.info(f"Insight value score: {insight_value:.2f}")
-        
-        # Data Coverage
-        data_coverage = self._evaluate_data_coverage(viz_specs)
-        self.logger.info(f"Data coverage score: {data_coverage:.2f}")
+        # Chart Relevance
+        chart_relevances = [self._evaluate_chart_relevance(spec) for spec in viz_specs]
+        relevance = np.mean(chart_relevances) if chart_relevances else 0.5
+        self.logger.info(f"Chart relevance score: {relevance:.2f}")
+
+        # Chart Usefulness
+        chart_usefulnesses = [self._evaluate_chart_usefulness(spec) for spec in viz_specs]
+        usefulness = np.mean(chart_usefulnesses) if chart_usefulnesses else 0.5
+        self.logger.info(f"Chart usefulness score: {usefulness:.2f}")
+
+        # Dashboard Diversity
+        diversity = self._evaluate_dashboard_diversity(viz_specs)
+        self.logger.info(f"Dashboard diversity score: {diversity:.2f}")
+
+        # Redundancy Penalty
+        redundancy = self._compute_redundancy_penalty(viz_specs)
+        self.logger.info(f"Redundancy penalty score: {redundancy:.2f}")
         
         metrics = BenchmarkMetrics(
-            statistical_validity=statistical_validity,
-            visualization_appropriateness=visualization_appropriateness,
-            insight_value=insight_value,
-            data_coverage=data_coverage
+            validity=validity,
+            relevance=relevance,
+            usefulness=usefulness,
+            diversity=diversity,
+            redundancy=redundancy
         )
         
         self.logger.info(f"Overall dashboard score: {metrics.overall_score():.2f}")

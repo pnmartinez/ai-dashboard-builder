@@ -537,53 +537,84 @@ class LLMPipeline:
             pd.DataFrame: Sorted dataframe if temporal column found, otherwise original df
         """
         try:
-            # List of common date/time column names (case-insensitive)
-            date_column_patterns = [
-                r"date",
-                r"time",
-                r"timestamp",
-                r"datetime",
-                r"created.*at",
-                r"updated.*at",
-                r"modified.*at",
-                r"year",
-                r"month",
-                r"day",
-                r"period",
-            ]
-
-            # Find columns that match date patterns
-            potential_date_cols = []
-            for col in df.columns:
-                # Check if column name matches any date pattern
-                if any(
-                    re.search(pattern, col.lower()) for pattern in date_column_patterns
-                ):
-                    potential_date_cols.append(col)
-
-            # Also check for columns that look like dates
-            for col in df.columns:
-                if col not in potential_date_cols:
-                    # Sample some values to check if they're dates
-                    sample = df[col].dropna().head()
-                    try:
-                        pd.to_datetime(sample, errors="raise")
+            # First try columns that are already datetime
+            datetime_cols = df.select_dtypes(include=['datetime64']).columns
+            
+            if not datetime_cols:
+                # List of common date/time column names (case-insensitive)
+                date_patterns = [
+                    r"date",
+                    r"time",
+                    r"timestamp",
+                    r"datetime",
+                    r"created.*at",
+                    r"updated.*at",
+                    r"modified.*at",
+                    r"year",
+                    r"month",
+                    r"day",
+                    r"period",
+                ]
+                
+                # Find potential date columns
+                potential_date_cols = []
+                
+                # Check column names against patterns
+                for col in df.columns:
+                    if any(re.search(pattern, col.lower()) for pattern in date_patterns):
                         potential_date_cols.append(col)
-                    except (ValueError, TypeError):
-                        continue
-
-            if potential_date_cols:
-                # Try each potential date column
+                
+                # Try to parse dates from string columns
+                for col in df.columns:
+                    if col not in potential_date_cols and df[col].dtype == 'object':
+                        # Sample non-null values
+                        sample = df[col].dropna().head(5)
+                        if len(sample) > 0:
+                            try:
+                                # Try parsing with dateutil first (more flexible)
+                                from dateutil import parser
+                                parsed_dates = []
+                                for val in sample:
+                                    try:
+                                        if isinstance(val, str):
+                                            parsed = parser.parse(val)
+                                            parsed_dates.append(parsed)
+                                    except (ValueError, TypeError):
+                                        break
+                                
+                                if len(parsed_dates) == len(sample):
+                                    potential_date_cols.append(col)
+                            except ImportError:
+                                # Fallback to pandas datetime parsing
+                                try:
+                                    pd.to_datetime(sample, errors='raise')
+                                    potential_date_cols.append(col)
+                                except (ValueError, TypeError):
+                                    continue
+                
+                # Try converting each potential date column
+                datetime_cols = []
                 for col in potential_date_cols:
                     try:
-                        # Convert to datetime and sort
-                        df[col] = pd.to_datetime(df[col], errors="raise")
-                        sorted_df = df.sort_values(by=col)
-                        logger.info(f"Successfully sorted dataframe by {col}")
-                        return sorted_df
-                    except (ValueError, TypeError) as e:
-                        logger.debug(f"Could not sort by {col}: {str(e)}")
+                        # Try dateutil parser first
+                        try:
+                            from dateutil import parser
+                            df[col] = df[col].apply(lambda x: parser.parse(str(x)) if pd.notnull(x) else pd.NaT)
+                            datetime_cols.append(col)
+                        except (ImportError, ValueError, TypeError):
+                            # Fallback to pandas
+                            df[col] = pd.to_datetime(df[col], errors='coerce')
+                            if not df[col].isna().all():  # Only include if some dates were parsed
+                                datetime_cols.append(col)
+                    except Exception as e:
+                        logger.debug(f"Could not convert {col} to datetime: {str(e)}")
                         continue
+
+            if datetime_cols:
+                # Sort by the first datetime column found
+                sort_col = datetime_cols[0]
+                logger.info(f"Sorting dataframe by datetime column: {sort_col}")
+                return df.sort_values(by=sort_col)
 
             logger.info("No suitable datetime column found for sorting")
             return df
@@ -591,6 +622,61 @@ class LLMPipeline:
         except Exception as e:
             logger.warning(f"Error while attempting to sort dataframe: {str(e)}")
             return df
+
+    def _is_datetime_column(self, series: pd.Series) -> bool:
+        """
+        Check if a series contains datetime values.
+        
+        Args:
+            series (pd.Series): The column to check
+            
+        Returns:
+            bool: True if the column contains datetime values
+        """
+        try:
+            # Check if already datetime
+            if pd.api.types.is_datetime64_any_dtype(series):
+                return True
+            
+            # Skip numeric columns
+            if pd.api.types.is_numeric_dtype(series):
+                return False
+                
+            # For object/string type columns, try parsing a sample
+            if pd.api.types.is_string_dtype(series) or pd.api.types.is_object_dtype(series):
+                # Get a larger sample of non-null values for better accuracy
+                sample = series.dropna().head(10)
+                if len(sample) == 0:
+                    return False
+                
+                success_count = 0
+                total_count = len(sample)
+                
+                for val in sample:
+                    if not isinstance(val, str):
+                        continue
+                        
+                    try:
+                        # Try dateutil parser first (more flexible)
+                        from dateutil import parser
+                        parser.parse(val)
+                        success_count += 1
+                    except (ImportError, ValueError, TypeError):
+                        try:
+                            # Fallback to pandas
+                            pd.to_datetime(val, errors='raise')
+                            success_count += 1
+                        except (ValueError, TypeError):
+                            continue
+                
+                # Consider it a datetime column if at least 80% of samples can be parsed
+                return success_count / total_count >= 0.8
+            
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Error checking datetime column: {str(e)}")
+            return False
 
     def analyze_dataset(self, df: pd.DataFrame, kpis: Optional[list] = None) -> str:
         """Perform comprehensive analysis of the dataset using LLM.
@@ -662,14 +748,14 @@ class LLMPipeline:
                 # Sort the dataframe chronologically if possible
                 df = self._sort_dataframe_chronologically(df)
 
-                # Get column metadata
+                # Get column metadata with improved datetime detection
                 logger.info("Creating column metadata")
                 column_metadata = {
                     col: {
                         "dtype": str(df[col].dtype),
                         "unique_count": self._serialize_for_json(df[col].nunique()),
                         "null_count": self._serialize_for_json(df[col].isnull().sum()),
-                        "is_temporal": pd.api.types.is_datetime64_any_dtype(df[col]),
+                        "is_temporal": self._is_datetime_column(df[col]),
                         "is_numeric": pd.api.types.is_numeric_dtype(df[col]),
                         "is_categorical": pd.api.types.is_categorical_dtype(df[col])
                         or (df[col].nunique() / len(df) < 0.05),
@@ -849,6 +935,32 @@ class LLMPipeline:
                         )
                         continue
 
+                    # Validate that referenced columns exist in the dataframe
+                    x_col = str(viz_spec.get("x", ""))
+                    y_col = str(viz_spec.get("y", ""))
+                    color_col = str(viz_spec.get("color", ""))
+
+                    # Skip visualization if it references non-existent columns
+                    if x_col and x_col not in df.columns:
+                        logger.warning(
+                            f"Skipping visualization {viz_id}: x-axis column '{x_col}' does not exist"
+                        )
+                        continue
+                    
+                    # For non-histogram/pie charts, validate y column exists
+                    if viz_spec.get("type", "").lower() not in ["histogram", "pie"] and y_col and y_col not in df.columns:
+                        logger.warning(
+                            f"Skipping visualization {viz_id}: y-axis column '{y_col}' does not exist"
+                        )
+                        continue
+
+                    # Validate color column if specified
+                    if color_col and color_col not in ["", "none", "null", None] and color_col not in df.columns:
+                        logger.warning(
+                            f"Skipping visualization {viz_id}: color column '{color_col}' does not exist"
+                        )
+                        continue
+
                     # Clean and validate the specification
                     cleaned_spec = {
                         "type": str(viz_spec.get("type", "")).lower(),
@@ -857,8 +969,43 @@ class LLMPipeline:
                         "color": str(viz_spec.get("color", "")),
                         "title": str(viz_spec.get("title", "")),
                         "description": str(viz_spec.get("description", "")),
-                        "parameters": viz_spec.get("parameters", {}),
+                        "insight": str(viz_spec.get("insight", viz_spec.get("description", ""))),  # Use description as fallback for insight
+                        "parameters": viz_spec.get("parameters", {}) or {},  # Ensure it's always a dictionary
                     }
+
+                    # Ensure insight is meaningful
+                    if not cleaned_spec["insight"] or cleaned_spec["insight"].lower() in ["none", "null", ""]:
+                        # Generate insight from description if available
+                        desc = cleaned_spec["description"].lower()
+                        if desc and desc not in ["none", "null", ""]:
+                            # Extract quantitative information if present
+                            numbers = re.findall(r'\d+(?:\.\d+)?', desc)
+                            comparisons = re.findall(r'(more|less|higher|lower|increase|decrease|compared)', desc)
+                            
+                            insight = desc
+                            if numbers or comparisons:
+                                # Add actionable context if not present
+                                if not any(term in desc for term in ["should", "could", "recommend", "suggest", "consider", "may want to"]):
+                                    insight = f"Based on this visualization, you may want to consider that {desc}"
+                            cleaned_spec["insight"] = insight
+                        else:
+                            # Generate basic insight based on chart type and columns
+                            chart_type = cleaned_spec["type"]
+                            x_col = cleaned_spec["x"]
+                            y_col = cleaned_spec["y"]
+                            
+                            if chart_type == "scatter":
+                                cleaned_spec["insight"] = f"This scatter plot reveals the relationship between {x_col} and {y_col}, which could help identify patterns or correlations."
+                            elif chart_type == "bar":
+                                cleaned_spec["insight"] = f"This bar chart shows the distribution of {y_col} across different {x_col} categories, highlighting key differences."
+                            elif chart_type == "line":
+                                cleaned_spec["insight"] = f"This line chart tracks changes in {y_col} over {x_col}, helping identify trends and patterns over time."
+                            elif chart_type == "histogram":
+                                cleaned_spec["insight"] = f"This histogram shows the distribution of {x_col}, which can help identify common values and outliers."
+                            elif chart_type == "pie":
+                                cleaned_spec["insight"] = f"This pie chart breaks down the composition of {x_col}, showing the relative proportions of each category."
+                            else:
+                                cleaned_spec["insight"] = f"This visualization shows the relationship between {x_col} and {y_col}."
 
                     # Replace "None" color with default color
                     if cleaned_spec["color"].lower() in ["none", "null", "", None]:
@@ -932,10 +1079,11 @@ class LLMPipeline:
                     # Add benchmark scores to the specs_data
                     specs_data["benchmark_scores"] = {
                         'overall_score': metrics.overall_score(),
-                        'statistical_validity': metrics.statistical_validity,
-                        'visualization_appropriateness': metrics.visualization_appropriateness,
-                        'insight_value': metrics.insight_value,
-                        'data_coverage': metrics.data_coverage
+                        'validity': metrics.validity,
+                        'relevance': metrics.relevance,
+                        'usefulness': metrics.usefulness,
+                        'diversity': metrics.diversity,
+                        'redundancy': metrics.redundancy
                     }
                     
                     # Update the JSON file with benchmark scores

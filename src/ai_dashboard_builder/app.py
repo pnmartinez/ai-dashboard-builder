@@ -180,13 +180,19 @@ def smart_numeric_conversion(df: pd.DataFrame) -> pd.DataFrame:
 
 def apply_filters(df: pd.DataFrame, filter_state: Dict) -> pd.DataFrame:
     """Apply filters to the dataframe."""
+    logger.info(f"Applying filters with state: {filter_state}")
+    
     if not filter_state:
+        logger.info("No filter state provided, returning original dataframe")
         return df
 
     filtered_df = df.copy()
+    original_len = len(filtered_df)
+    logger.info(f"Original dataframe length: {original_len}")
 
     temporal_filter = filter_state.get("temporal", {})
     if temporal_filter.get("start_date") and temporal_filter.get("end_date"):
+        logger.info(f"Applying temporal filter: {temporal_filter}")
         for col in df.columns:
             try:
                 filtered_df[col] = pd.to_datetime(filtered_df[col])
@@ -194,15 +200,22 @@ def apply_filters(df: pd.DataFrame, filter_state: Dict) -> pd.DataFrame:
                     (filtered_df[col] >= temporal_filter["start_date"])
                     & (filtered_df[col] <= temporal_filter["end_date"])
                 ]
+                logger.info(f"Applied temporal filter on column {col}. Rows after filter: {len(filtered_df)}")
                 break
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Column {col} is not temporal: {str(e)}")
                 continue
 
     categorical_filters = filter_state.get("categorical", {})
     for col, values in categorical_filters.items():
         if values:
+            logger.info(f"Applying categorical filter on {col} with values: {values}")
+            before_len = len(filtered_df)
             filtered_df = filtered_df[filtered_df[col].astype(str).isin(values)]
+            logger.info(f"Categorical filter on {col} reduced rows from {before_len} to {len(filtered_df)}")
 
+    final_len = len(filtered_df)
+    logger.info(f"Final filtered dataframe length: {final_len} (reduced by {original_len - final_len} rows)")
     return filtered_df
 
 
@@ -268,14 +281,14 @@ app.layout = html.Div(
                                                     id="llm-provider",
                                                     options=[
                                                         {
-                                                            "label": [
+                                                            "label": html.Span([
                                                                 "Local ",
                                                                 html.A(
                                                                     "(Ollama)",
                                                                     href="https://ollama.com/download",
                                                                     target="_blank",
                                                                 ),
-                                                            ],
+                                                            ]),
                                                             "value": "local",
                                                         },
                                                         {
@@ -508,6 +521,18 @@ app.layout = html.Div(
                 "backgroundColor": COLORS["background"],
                 "position": "relative",
             },
+        ),
+        dbc.Modal(
+            [
+                dbc.ModalHeader(dbc.ModalTitle("Expanded View")),
+                dbc.ModalBody(
+                    dcc.Graph(id="modal-figure", config={"displayModeBar": True}),
+                    style={"height": "80vh"},
+                ),
+            ],
+            id="figure-modal",
+            size="xl",
+            is_open=False,
         ),
     ],
     style={"backgroundColor": COLORS["background"], "minHeight": "100vh"},
@@ -909,10 +934,11 @@ def toggle_viz_specs_modal(
                     # Get benchmark scores if available
                     benchmark_scores = specs.get("benchmark_scores", {})
                     overall_score = benchmark_scores.get("overall_score", None)
-                    statistical_validity = benchmark_scores.get("statistical_validity", None)
-                    visualization_appropriateness = benchmark_scores.get("visualization_appropriateness", None)
-                    insight_value = benchmark_scores.get("insight_value", None)
-                    data_coverage = benchmark_scores.get("data_coverage", None)
+                    validity = benchmark_scores.get("validity", None)
+                    relevance = benchmark_scores.get("relevance", None)
+                    usefulness = benchmark_scores.get("usefulness", None)
+                    diversity = benchmark_scores.get("diversity", None)
+                    redundancy = benchmark_scores.get("redundancy", None)
 
                     file_list.append(
                         {
@@ -925,10 +951,11 @@ def toggle_viz_specs_modal(
                                 "dataset_filename": specs.get("dataset_filename", "Unknown dataset"),
                                 "scores": {
                                     "overall": overall_score,
-                                    "statistical_validity": statistical_validity,
-                                    "visualization_appropriateness": visualization_appropriateness,
-                                    "insight_value": insight_value,
-                                    "data_coverage": data_coverage
+                                    "validity": validity,
+                                    "relevance": relevance,
+                                    "usefulness": usefulness,
+                                    "diversity": diversity,
+                                    "redundancy": redundancy
                                 }
                             },
                         }
@@ -962,20 +989,24 @@ def toggle_viz_specs_modal(
                                                 style={"marginRight": "10px", "color": "#28a745"}
                                             ),
                                             html.Span(
-                                                f"Statistical Validity: {item['display_data']['scores']['statistical_validity']:.2f}" if item['display_data']['scores']['statistical_validity'] is not None else "Statistical Validity: N/A",
+                                                f"Validity: {item['display_data']['scores']['validity']:.2f}" if item['display_data']['scores']['validity'] is not None else "Validity: N/A",
                                                 style={"marginRight": "10px"}
                                             ),
                                             html.Span(
-                                                f"Visualization Appropriateness: {item['display_data']['scores']['visualization_appropriateness']:.2f}" if item['display_data']['scores']['visualization_appropriateness'] is not None else "Visualization Appropriateness: N/A",
+                                                f"Relevance: {item['display_data']['scores']['relevance']:.2f}" if item['display_data']['scores']['relevance'] is not None else "Relevance: N/A",
                                                 style={"marginRight": "10px"}
                                             ),
                                             html.Br(),
                                             html.Span(
-                                                f"Insight Value: {item['display_data']['scores']['insight_value']:.2f}" if item['display_data']['scores']['insight_value'] is not None else "Insight Value: N/A",
+                                                f"Usefulness: {item['display_data']['scores']['usefulness']:.2f}" if item['display_data']['scores']['usefulness'] is not None else "Usefulness: N/A",
                                                 style={"marginRight": "10px"}
                                             ),
                                             html.Span(
-                                                f"Data Coverage: {item['display_data']['scores']['data_coverage']:.2f}" if item['display_data']['scores']['data_coverage'] is not None else "Data Coverage: N/A",
+                                                f"Diversity: {item['display_data']['scores']['diversity']:.2f}" if item['display_data']['scores']['diversity'] is not None else "Diversity: N/A",
+                                                style={"marginRight": "10px"}
+                                            ),
+                                            html.Span(
+                                                f"Redundancy: {item['display_data']['scores']['redundancy']:.2f}" if item['display_data']['scores']['redundancy'] is not None else "Redundancy: N/A",
                                             ),
                                         ], style={"fontSize": "0.85em", "color": "#666"})
                                     ]) if any(score is not None for score in item['display_data']['scores'].values()) else None
@@ -1101,7 +1132,9 @@ def analyze_data(
         df_full = pd.read_json(io.StringIO(data_store["full_data"]), orient="split")
         filename = data_store.get("filename", "unknown_file")
 
-        df = df_full.head(data_store["row_limit"]).iloc[:, : data_store["col_limit"]]
+        # Remove the preview limit - use full dataset
+        df = df_full
+
         imported_viz_specs = data_store.get("imported_viz_specs")
 
         if imported_viz_specs:
@@ -1185,34 +1218,58 @@ def analyze_data(
         viz_sorting_info = []
         
         for viz_id, viz_spec in viz_specs.items():
-            x, y = viz_spec.get('x'), viz_spec.get('y')
-            relationship = benchmark._find_relationship(x, y) if x and y else None
+            # Get all variables involved in the visualization
+            x = viz_spec.get('x')
+            y = viz_spec.get('y')
+            color = viz_spec.get('color')
+            size = viz_spec.get('size')
             
-            # Format relationship info for display
+            # Store all variables used in this visualization
+            viz_vars = [var for var in [x, y, color, size] if var]
+            
+            # Initialize relationship info
             relationship_text = ""
-            sort_value = float('-inf')  # Default sort value for no relationship
+            sort_value = float('-inf')
             
-            if relationship:
-                rel_type = relationship['type']
-                p_value = relationship.get('p_value')
-                strength = relationship.get('strength', 0)
+            # Find relationships between all pairs of variables
+            relationships = []
+            for i, var1 in enumerate(viz_vars):
+                for var2 in viz_vars[i+1:]:
+                    rel = benchmark._find_relationship(var1, var2) if var1 and var2 else None
+                    if rel:
+                        relationships.append({
+                            'var1': var1,
+                            'var2': var2,
+                            'relationship': rel
+                        })
+            
+            # Sort relationships by significance
+            relationships.sort(key=lambda x: x['relationship']['p_value'] if x['relationship'].get('p_value') is not None else 1)
+            
+            # Generate text for the most significant relationship
+            if relationships:
+                most_sig = relationships[0]
+                rel = most_sig['relationship']
+                var1, var2 = most_sig['var1'], most_sig['var2']
+                p_value = rel.get('p_value')
+                stat = rel.get('stat')
+                rel_type = rel.get('type')
                 
-                # Calculate sort value based on significance and strength
                 if p_value is not None:
-                    # Combine p-value and strength for sorting
-                    # Lower p-values and higher strength are better
-                    sort_value = (-float(p_value)) * abs(float(strength))
+                    sort_value = (-float(p_value)) * abs(float(stat)) if stat is not None else -float(p_value)
                 
                 if rel_type == 'numeric-numeric':
-                    relationship_text = f"Relationship: {relationship['columns'][0]} and {relationship['columns'][1]} have a correlation of {relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
+                    relationship_text = f"Relationship: {var1} and {var2} show a correlation of {stat:.3f} (p={p_value:.3f})"
                 elif rel_type == 'cat-cat':
-                    relationship_text = f"Association: Chi-square test between {relationship['columns'][0]} and {relationship['columns'][1]} shows χ²={relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
+                    relationship_text = f"Association: Chi-square test between {var1} and {var2} shows χ²={stat:.3f} (p={p_value:.3f})"
                 elif rel_type == 'numeric-cat':
-                    relationship_text = f"Group differences: ANOVA between {relationship['columns'][0]} and {relationship['columns'][1]} shows F={relationship['stat']:.3f} (p={relationship['p_value']:.3f})"
+                    num_var = var1 if var1 in benchmark.numeric_cols else var2
+                    cat_var = var2 if var1 in benchmark.numeric_cols else var1
+                    relationship_text = f"Group differences: ANOVA between {num_var} (numeric) and {cat_var} (categorical) shows F={stat:.3f} (p={p_value:.3f})"
             
             viz_relationships[viz_id] = {
                 'text': relationship_text,
-                'significance': relationship['p_value'] < 0.05 if relationship and relationship['p_value'] is not None else False
+                'significance': relationships[0]['relationship']['p_value'] < 0.05 if relationships else False
             }
             
             # Store sorting info
@@ -1313,13 +1370,13 @@ def analyze_data(
                                                                                     "displayModeBar": False
                                                                                 },
                                                                             ),
-                                                                            # Add relationship info
+                                                                            # Add relationship info using the correct viz_id
                                                                             html.Div(
                                                                                 [
                                                                                     html.Small(
-                                                                                        viz_relationships[list(figures.keys())[i]]['text'],
+                                                                                        viz_relationships[viz_id]['text'],
                                                                                         style={
-                                                                                            "color": COLORS["primary"] if viz_relationships[list(figures.keys())[i]]['significance'] else COLORS["text_secondary"],
+                                                                                            "color": COLORS["primary"] if viz_relationships[viz_id]['significance'] else COLORS["text_secondary"],
                                                                                             "fontStyle": "italic",
                                                                                             "display": "block",
                                                                                             "marginTop": "8px",
@@ -1327,7 +1384,7 @@ def analyze_data(
                                                                                             "backgroundColor": f"{COLORS['background']}",
                                                                                             "borderRadius": "4px",
                                                                                             "border": f"1px solid {COLORS['divider']}"
-                                                                                        } if viz_relationships[list(figures.keys())[i]]['text'] else {"display": "none"}
+                                                                                        } if viz_relationships[viz_id]['text'] else {"display": "none"}
                                                                                     ),
                                                                                 ],
                                                                                 style={
@@ -1385,7 +1442,7 @@ def analyze_data(
                                         xs=12,
                                         md=6,
                                     )
-                                    for i, (fig, code) in enumerate(figures.values())
+                                    for i, (viz_id, (fig, code)) in enumerate(figures.items())
                                 ]
                             )
                         ]
@@ -1511,11 +1568,12 @@ def update_button_text(dashboard_rendered: bool) -> str:
 # Filter Controls Creation
 @app.callback(
     [Output("filter-controls", "children"), Output("sidebar-collapse", "is_open")],
-    [Input("dashboard-rendered", "data"), Input("data-store", "data")],
+    [Input("dashboard-rendered", "data")],
+    [State("data-store", "data"), State("filter-state", "data")],
     prevent_initial_call=True,
 )
 def create_filter_controls(
-    dashboard_rendered: bool, json_data: str
+    dashboard_rendered: bool, json_data: str, filter_state: Optional[Dict]
 ) -> Tuple[List, bool]:
     """Create filter controls based on the dataset columns."""
     if not dashboard_rendered or not json_data:
@@ -1528,39 +1586,77 @@ def create_filter_controls(
         filters = []
         temporal_col = None
 
-        # Find temporal column
-        for col in df.columns:
+        # Find temporal column with improved detection
+        def is_temporal_column(series: pd.Series) -> bool:
+            """Check if a series contains valid datetime values."""
             try:
-                temp_series = pd.to_datetime(df[col], errors="coerce")
-                if not temp_series.isna().all():
-                    temporal_col = col
-                    df[col] = temp_series
-                    break
+                if pd.api.types.is_datetime64_any_dtype(series):
+                    return True
+                if pd.api.types.is_numeric_dtype(series):
+                    return False
+                if pd.api.types.is_string_dtype(series) or pd.api.types.is_object_dtype(series):
+                    sample = series.dropna().head(10)
+                    if len(sample) == 0:
+                        return False
+                    success_count = 0
+                    for val in sample:
+                        if not isinstance(val, str):
+                            continue
+                        try:
+                            pd.to_datetime(val)
+                            success_count += 1
+                        except (ValueError, TypeError):
+                            continue
+                    return success_count / len(sample) >= 0.8
+                return False
             except Exception:
-                continue
+                return False
+
+        # First check columns that are already datetime
+        datetime_cols = df.select_dtypes(include=['datetime64']).columns
+        if len(datetime_cols) > 0:
+            temporal_col = datetime_cols[0]
+        else:
+            # Then check other columns that might contain datetime values
+            for col in df.columns:
+                if is_temporal_column(df[col]):
+                    try:
+                        df[col] = pd.to_datetime(df[col], errors='coerce')
+                        if not df[col].isna().all():
+                            temporal_col = col
+                            break
+                    except Exception:
+                        continue
 
         # Add temporal filter if found
         if temporal_col:
-            min_date = df[temporal_col].min()
-            max_date = df[temporal_col].max()
+            valid_dates = df[temporal_col].dropna()
+            if len(valid_dates) > 0:
+                min_date = valid_dates.min()
+                max_date = valid_dates.max()
 
-            if pd.notna(min_date) and pd.notna(max_date):
-                min_date_str = min_date.strftime("%Y-%m-%d")
-                max_date_str = max_date.strftime("%Y-%m-%d")
+                if pd.notna(min_date) and pd.notna(max_date):
+                    min_date_str = min_date.strftime("%Y-%m-%d")
+                    max_date_str = max_date.strftime("%Y-%m-%d")
 
-                filters.extend(
-                    [
+                    # Get current filter values from filter state if available
+                    current_start = min_date_str
+                    current_end = max_date_str
+                    if filter_state and "temporal" in filter_state:
+                        current_start = filter_state["temporal"].get("start_date", min_date_str)
+                        current_end = filter_state["temporal"].get("end_date", max_date_str)
+
+                    filters.extend([
                         html.H6("Time Range", className="mt-3"),
                         dcc.DatePickerRange(
                             id="date-range-filter",
                             min_date_allowed=min_date_str,
                             max_date_allowed=max_date_str,
-                            start_date=min_date_str,
-                            end_date=max_date_str,
+                            start_date=current_start,
+                            end_date=current_end,
                             className="mb-3 w-100",
                         ),
-                    ]
-                )
+                    ])
 
         # Add categorical filters
         categorical_cols = [
@@ -1572,22 +1668,22 @@ def create_filter_controls(
         for col in categorical_cols:
             unique_values = sorted(df[col].dropna().unique())
             if len(unique_values) > 0:
-                filters.extend(
-                    [
-                        html.H6(f"{col}", className="mt-3"),
-                        dcc.Dropdown(
-                            id={"type": "category-filter", "column": col},
-                            options=[
-                                {"label": str(val), "value": str(val)}
-                                for val in unique_values
-                            ],
-                            value=[],
-                            multi=True,
-                            placeholder=f"Select {col}...",
-                            className="mb-3",
-                        ),
-                    ]
-                )
+                # Get current values from filter state
+                current_values = []
+                if filter_state and "categorical" in filter_state:
+                    current_values = filter_state["categorical"].get(col, [])
+
+                filters.extend([
+                    html.H6(f"{col}", className="mt-3"),
+                    dcc.Dropdown(
+                        id={"type": "category-filter", "column": col},
+                        options=[{"label": str(val), "value": str(val)} for val in unique_values],
+                        value=current_values,
+                        multi=True,
+                        placeholder=f"Select {col}...",
+                        className="mb-3",
+                    ),
+                ])
 
         if filters:
             filters.append(
@@ -1613,133 +1709,215 @@ def create_filter_controls(
 @app.callback(
     Output("filter-state", "data"),
     [
-        Input("date-range-filter", "start_date"),
-        Input("date-range-filter", "end_date"),
-        Input({"type": "category-filter", "column": ALL}, "value"),
-        Input({"type": "category-filter", "column": ALL}, "id"),
         Input("reset-filters-button", "n_clicks"),
+        Input({"type": "category-filter", "column": ALL}, "value"),
+    ],
+    [
+        State({"type": "category-filter", "column": ALL}, "id"),
+        State("filter-state", "data"),
     ],
     prevent_initial_call=True,
 )
 def update_filter_state(
-    start_date: str,
-    end_date: str,
+    reset_clicks: int,
     category_values: List,
     category_ids: List,
-    reset_clicks: int,
+    current_filter_state: Optional[Dict],
 ) -> Optional[Dict]:
     """Update the filter state based on user selections."""
+    logger.info("=" * 50)
+    logger.info("FILTER STATE UPDATE TRIGGERED")
+    logger.info("=" * 50)
+    
     ctx = dash.callback_context
     if not ctx.triggered:
+        logger.info("No trigger for filter state update")
         raise PreventUpdate
 
-    if ctx.triggered[0]["prop_id"] == "reset-filters-button.n_clicks":
+    trigger = ctx.triggered[0]
+    logger.info(f"Trigger: {trigger}")
+    logger.info(f"Trigger prop_id: {trigger['prop_id']}")
+    logger.info(f"Trigger value: {trigger['value']}")
+    logger.info(f"Current filter state: {current_filter_state}")
+    logger.info(f"Category values: {category_values}")
+    logger.info(f"Category IDs: {category_ids}")
+
+    # Handle reset button click
+    if trigger["prop_id"] == "reset-filters-button.n_clicks":
+        logger.info("Reset filters button clicked, clearing filter state")
         return None
 
-    filter_state = {
-        "temporal": {"start_date": start_date, "end_date": end_date},
-        "categorical": {
+    # Initialize filter state from current state or create new
+    filter_state = current_filter_state.copy() if current_filter_state else {"temporal": {}, "categorical": {}}
+    logger.info(f"Initial filter state: {filter_state}")
+
+    # Handle categorical filter updates
+    if category_values and category_ids:
+        logger.info("Updating categorical filters")
+        filter_state["categorical"] = {
             id["column"]: values
             for id, values in zip(category_ids, category_values)
             if values
-        },
-    }
+        }
+        logger.info(f"Set categorical filters: {filter_state['categorical']}")
 
+    # Only return filter state if it contains actual filters
+    if filter_state.get("temporal") or filter_state.get("categorical"):
+        logger.info(f"Returning updated filter state: {filter_state}")
+        return filter_state
+    
+    logger.info("No active filters, returning None")
+    return None
+
+
+# Date Range Filter Updates
+@app.callback(
+    Output("filter-state", "data", allow_duplicate=True),
+    [
+        Input("date-range-filter", "start_date"),
+        Input("date-range-filter", "end_date"),
+    ],
+    State("filter-state", "data"),
+    prevent_initial_call=True,
+)
+def update_date_range_filter(
+    start_date: str,
+    end_date: str,
+    current_filter_state: Optional[Dict],
+) -> Optional[Dict]:
+    """Update filter state when date range changes."""
+    logger.info("=" * 50)
+    logger.info("DATE RANGE FILTER UPDATE TRIGGERED")
+    logger.info("=" * 50)
+    
+    logger.info(f"Start date: {start_date}, End date: {end_date}")
+    logger.info(f"Current filter state: {current_filter_state}")
+
+    if not dash.callback_context.triggered:
+        logger.info("No trigger for date range update")
+        raise PreventUpdate
+
+    # Initialize filter state from current state or create new
+    filter_state = current_filter_state.copy() if current_filter_state else {"temporal": {}, "categorical": {}}
+    
+    # Update temporal filter
+    if start_date is not None and end_date is not None:
+        filter_state["temporal"] = {"start_date": start_date, "end_date": end_date}
+        logger.info(f"Set temporal filter: {filter_state['temporal']}")
+    else:
+        filter_state["temporal"] = {}
+        logger.info("Cleared temporal filter")
+    
+    # Return None if no filters are active
+    if not filter_state["temporal"] and not filter_state.get("categorical"):
+        logger.info("No active filters, returning None")
+        return None
+    
+    logger.info(f"Returning updated filter state: {filter_state}")
     return filter_state
 
 
 # Visualization Updates
 @app.callback(
-    [
-        Output({"type": "viz", "index": ALL}, "figure"),
-        Output("date-range-filter", "start_date"),
-        Output("date-range-filter", "end_date"),
-        Output({"type": "category-filter", "column": ALL}, "value"),
-    ],
-    [Input("reset-filters-button", "n_clicks"), Input("filter-state", "data")],
+    Output({"type": "viz", "index": ALL}, "figure"),
+    [Input("filter-state", "data")],
     [
         State("data-store", "data"),
         State({"type": "viz", "index": ALL}, "figure"),
-        State({"type": "category-filter", "column": ALL}, "id"),
     ],
     prevent_initial_call=True,
 )
 def update_visualizations(
-    reset_clicks: int,
-    filter_state: Dict,
+    filter_state: Optional[Dict],
     json_data: str,
     current_figures: List,
-    category_ids: List,
-) -> Tuple:
+) -> List:
     """Update all visualizations based on the current filter state."""
-    ctx = dash.callback_context
-    if not ctx.triggered or not json_data:
+    logger.info("=" * 50)
+    logger.info("VISUALIZATION UPDATE TRIGGERED")
+    logger.info("=" * 50)
+    
+    logger.info(f"Received filter state: {filter_state}")
+    logger.info(f"Current figures count: {len(current_figures) if current_figures else 0}")
+
+    if not json_data:
+        logger.warning("No data available for visualization update")
         raise PreventUpdate
 
     try:
         data_store = json.loads(json_data)
         df = pd.read_json(io.StringIO(data_store["full_data"]), orient="split")
+        logger.info(f"Loaded dataframe with shape: {df.shape}")
 
         viz_specs = data_store.get("imported_viz_specs") or data_store.get(
             "visualization_specs"
         )
         if not viz_specs:
             logger.warning("No visualization specifications found in data store")
-            return current_figures, None, None, [[] for _ in category_ids]
+            return current_figures
 
-        if ctx.triggered[0]["prop_id"] == "reset-filters-button.n_clicks":
-            logger.info("Resetting all filters")
+        if not filter_state:
+            logger.info("No filter state, creating visualizations with full dataset")
             dashboard_builder = DashboardBuilder(df, COLORS)
             figures = dashboard_builder.create_all_figures(viz_specs)
+            logger.info(f"Created {len(figures)} figures from full dataset")
+            result = [list(figures.values())[i][0] for i in range(len(current_figures))]
+            logger.info(f"Returning {len(result)} figures")
+            return result
 
-            new_figures = [
-                list(figures.values())[i][0] if i < len(figures) else current_figures[i]
-                for i in range(len(current_figures))
-            ]
-
-            min_date = None
-            max_date = None
-            for col in df.columns:
-                try:
-                    temp_series = pd.to_datetime(df[col], errors="coerce")
-                    if not temp_series.isna().all():
-                        df[col] = temp_series
-                        min_date = df[col].min().strftime("%Y-%m-%d")
-                        max_date = df[col].max().strftime("%Y-%m-%d")
-                        break
-                except Exception:
-                    continue
-
-            return new_figures, min_date, max_date, [[] for _ in category_ids]
-
-        if filter_state:
-            filtered_df = apply_filters(df, filter_state)
-
-            dashboard_builder = DashboardBuilder(filtered_df, COLORS)
-            figures = dashboard_builder.create_all_figures(viz_specs)
-
-            new_figures = [
-                list(figures.values())[i][0] if i < len(figures) else current_figures[i]
-                for i in range(len(current_figures))
-            ]
-
-            logger.info(f"Created {len(new_figures)} new figures with filtered data")
-
-            return (
-                new_figures,
-                filter_state["temporal"].get("start_date"),
-                filter_state["temporal"].get("end_date"),
-                [
-                    filter_state["categorical"].get(cat_id["column"], [])
-                    for cat_id in category_ids
-                ],
-            )
-
-        return current_figures, None, None, [[] for _ in category_ids]
+        logger.info("Applying filters to dataset")
+        filtered_df = apply_filters(df, filter_state)
+        logger.info(f"Dataset after filtering: {filtered_df.shape}")
+        
+        dashboard_builder = DashboardBuilder(filtered_df, COLORS)
+        figures = dashboard_builder.create_all_figures(viz_specs)
+        logger.info(f"Created {len(figures)} figures from filtered dataset")
+        result = [list(figures.values())[i][0] for i in range(len(current_figures))]
+        logger.info(f"Returning {len(result)} figures")
+        return result
 
     except Exception as e:
-        logger.error(f"Error updating visualizations: {str(e)}")
-        return current_figures, None, None, [[] for _ in category_ids]
+        logger.error(f"Error updating visualizations: {str(e)}", exc_info=True)
+        logger.error("Full traceback:", exc_info=True)
+        return current_figures
+
+
+# Date Range Updates
+@app.callback(
+    [
+        Output("date-range-filter", "start_date"),
+        Output("date-range-filter", "end_date"),
+    ],
+    Input("dashboard-rendered", "data"),
+    State("data-store", "data"),
+    prevent_initial_call=True,
+)
+def update_date_range(dashboard_rendered: bool, json_data: str) -> Tuple[str, str]:
+    """Update date range filter with initial values."""
+    if not dashboard_rendered or not json_data:
+        raise PreventUpdate
+
+    try:
+        data_store = json.loads(json_data)
+        df = pd.read_json(io.StringIO(data_store["full_data"]), orient="split")
+
+        # Find temporal column and get date range
+        for col in df.columns:
+            try:
+                temp_series = pd.to_datetime(df[col], errors="coerce")
+                if not temp_series.isna().all():
+                    df[col] = temp_series
+                    min_date = df[col].min().strftime("%Y-%m-%d")
+                    max_date = df[col].max().strftime("%Y-%m-%d")
+                    return min_date, max_date
+            except Exception:
+                continue
+
+        return dash.no_update, dash.no_update
+
+    except Exception as e:
+        logger.error(f"Error updating date range: {str(e)}")
+        return dash.no_update, dash.no_update
 
 
 # KPI Selector Population
@@ -1763,23 +1941,6 @@ def update_kpi_selector(json_data: str) -> List[Dict[str, str]]:
         return []
 
 
-# Add this modal component to the main layout (after the results-container)
-(
-    dbc.Modal(
-        [
-            dbc.ModalHeader(dbc.ModalTitle("Expanded View")),
-            dbc.ModalBody(
-                dcc.Graph(id="modal-figure", config={"displayModeBar": True}),
-                style={"height": "80vh"},  # Make modal take most of the screen
-            ),
-        ],
-        id="figure-modal",
-        size="xl",  # Extra large modal
-        is_open=False,
-    ),
-)
-
-
 # Add these new callbacks at the end of the file
 @app.callback(
     [Output("figure-modal", "is_open"), Output("modal-figure", "figure")],
@@ -1790,73 +1951,37 @@ def update_kpi_selector(json_data: str) -> List[Dict[str, str]]:
 def toggle_modal(n_clicks, figures, is_open):
     """Handle maximizing/minimizing of figures."""
     ctx = dash.callback_context
-    if not ctx.triggered:
+    if not ctx.triggered or not any(n_clicks):
         return False, dash.no_update
 
     # Get the index of the clicked button
     button_id = ctx.triggered[0]["prop_id"]
-    if not any(n_clicks):  # If no buttons were clicked
-        return False, dash.no_update
+    clicked_idx = json.loads(button_id.split(".")[0])["index"]
+    
+    # Get the corresponding figure
+    figure = figures[clicked_idx]
+    
+    # Create a new figure with adjusted layout for the modal
+    modal_figure = go.Figure(figure)
+    
+    # Update layout for modal
+    modal_figure.update_layout(
+        height=700,  # Slightly less than 80vh to ensure it fits
+        margin=dict(l=20, r=20, t=30, b=20),
+        autosize=True,
+        showlegend=True,
+        legend=dict(
+            bgcolor="white",
+            bordercolor="#FFD7D7",
+            borderwidth=1,
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+        ),
+    )
 
-    # Extract the index from the button id
-    try:
-        clicked_idx = json.loads(button_id.split(".")[0])["index"]
-        # Get the corresponding figure
-        figure = figures[clicked_idx]
-
-        # Create a new figure with adjusted layout for the modal
-        modal_figure = go.Figure()
-
-        # Copy each trace individually to preserve color settings
-        for trace in figure["data"]:
-            new_trace = dict(trace)
-
-            # Handle color settings for markers
-            if "marker" in new_trace:
-                marker = dict(new_trace["marker"])
-                # If color is None, set a default color
-                if marker.get("color") is None:
-                    marker["color"] = "#636EFA"  # Default Plotly blue
-                # If color is a list containing None values, replace with default color
-                elif isinstance(marker.get("color"), list):
-                    marker["color"] = [
-                        ("#636EFA" if c is None else c) for c in marker["color"]
-                    ]
-                new_trace["marker"] = marker
-
-            modal_figure.add_trace(new_trace)
-
-        # Copy and update the layout
-        if "layout" in figure:
-            layout = dict(figure["layout"])
-            # Update layout for modal
-            layout.update(
-                # Use fixed height that matches container
-                height=700,  # Slightly less than 80vh to ensure it fits
-                # Adjust margins to maximize plot area
-                margin=dict(l=20, r=20, t=30, b=20),
-                # Ensure plot fits within container
-                autosize=True,
-                # Legend settings
-                showlegend=True,
-                legend=dict(
-                    bgcolor="white",
-                    bordercolor="#FFD7D7",
-                    borderwidth=1,
-                    # Move legend inside plot area
-                    yanchor="top",
-                    y=0.99,
-                    xanchor="left",
-                    x=0.01,
-                ),
-            )
-            modal_figure.update_layout(layout)
-
-        return not is_open, modal_figure
-
-    except Exception as e:
-        logger.error(f"Error in modal toggle: {str(e)}")
-        return False, dash.no_update
+    return not is_open, modal_figure
 
 
 # Define styles as dictionaries for better maintainability
