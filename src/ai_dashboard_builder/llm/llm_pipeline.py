@@ -8,7 +8,7 @@ import os
 import re
 import time
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import numpy as np
 import pandas as pd
@@ -34,6 +34,20 @@ debug_handler = logging.handlers.RotatingFileHandler(
 debug_handler.setLevel(logging.DEBUG)
 logger.addHandler(debug_handler)
 
+class NumpyJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that can handle numpy types."""
+    def default(self, obj):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+            np.int16, np.int32, np.int64, np.uint8,
+            np.uint16, np.uint32, np.uint64)):
+            return int(obj)
+        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+            return float(obj)
+        elif isinstance(obj, (np.bool_)):
+            return bool(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 class LLMPipeline:
     """A pipeline for processing data through various Language Learning Models (LLMs).
@@ -118,26 +132,19 @@ class LLMPipeline:
             f"Initializing LLMPipeline with model: {model_name} (local: {use_local})"
         )
 
-    def _serialize_for_json(self, obj) -> Any:
-        """Convert various data types to JSON-serializable format.
-
-        Args:
-            obj: Object to serialize
-
-        Returns:
-            JSON-serializable version of the input object
-        """
-        if isinstance(obj, (np.int64, np.int32)):
-            return int(obj)
-        elif isinstance(obj, (np.float64, np.float32)):
-            return float(obj)
-        elif isinstance(obj, pd.Timestamp):
-            return obj.isoformat()
-        elif isinstance(obj, (pd.Series, pd.DataFrame)):
-            return obj.to_dict()
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return str(obj)
+    def _serialize_for_json(self, value: Any) -> Any:
+        """Serialize a value for JSON encoding."""
+        if pd.isna(value):
+            return None
+        if isinstance(value, (np.int64, np.int32)):
+            return int(value)
+        if isinstance(value, (np.float64, np.float32)):
+            return float(value)
+        if isinstance(value, np.bool_):
+            return bool(value)
+        if isinstance(value, pd.Timestamp):
+            return value.isoformat()
+        return str(value)
 
     def _time_execution(self, func_name: str, func, *args, **kwargs) -> Any:
         """Time the execution of a function and log the duration.
@@ -528,100 +535,15 @@ class LLMPipeline:
             return f"Error: {error_msg}"
 
     def _sort_dataframe_chronologically(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Attempt to sort the dataframe chronologically by detecting date/time columns.
-
-        Args:
-            df (pd.DataFrame): Input dataframe
-
-        Returns:
-            pd.DataFrame: Sorted dataframe if temporal column found, otherwise original df
-        """
-        try:
-            # First try columns that are already datetime
-            datetime_cols = df.select_dtypes(include=['datetime64']).columns
-            
-            if not datetime_cols:
-                # List of common date/time column names (case-insensitive)
-                date_patterns = [
-                    r"date",
-                    r"time",
-                    r"timestamp",
-                    r"datetime",
-                    r"created.*at",
-                    r"updated.*at",
-                    r"modified.*at",
-                    r"year",
-                    r"month",
-                    r"day",
-                    r"period",
-                ]
-                
-                # Find potential date columns
-                potential_date_cols = []
-                
-                # Check column names against patterns
-                for col in df.columns:
-                    if any(re.search(pattern, col.lower()) for pattern in date_patterns):
-                        potential_date_cols.append(col)
-                
-                # Try to parse dates from string columns
-                for col in df.columns:
-                    if col not in potential_date_cols and df[col].dtype == 'object':
-                        # Sample non-null values
-                        sample = df[col].dropna().head(5)
-                        if len(sample) > 0:
-                            try:
-                                # Try parsing with dateutil first (more flexible)
-                                from dateutil import parser
-                                parsed_dates = []
-                                for val in sample:
-                                    try:
-                                        if isinstance(val, str):
-                                            parsed = parser.parse(val)
-                                            parsed_dates.append(parsed)
-                                    except (ValueError, TypeError):
-                                        break
-                                
-                                if len(parsed_dates) == len(sample):
-                                    potential_date_cols.append(col)
-                            except ImportError:
-                                # Fallback to pandas datetime parsing
-                                try:
-                                    pd.to_datetime(sample, errors='raise')
-                                    potential_date_cols.append(col)
-                                except (ValueError, TypeError):
-                                    continue
-                
-                # Try converting each potential date column
-                datetime_cols = []
-                for col in potential_date_cols:
-                    try:
-                        # Try dateutil parser first
-                        try:
-                            from dateutil import parser
-                            df[col] = df[col].apply(lambda x: parser.parse(str(x)) if pd.notnull(x) else pd.NaT)
-                            datetime_cols.append(col)
-                        except (ImportError, ValueError, TypeError):
-                            # Fallback to pandas
-                            df[col] = pd.to_datetime(df[col], errors='coerce')
-                            if not df[col].isna().all():  # Only include if some dates were parsed
-                                datetime_cols.append(col)
-                    except Exception as e:
-                        logger.debug(f"Could not convert {col} to datetime: {str(e)}")
-                        continue
-
-            if datetime_cols:
-                # Sort by the first datetime column found
-                sort_col = datetime_cols[0]
-                logger.info(f"Sorting dataframe by datetime column: {sort_col}")
-                return df.sort_values(by=sort_col)
-
-            logger.info("No suitable datetime column found for sorting")
-            return df
-
-        except Exception as e:
-            logger.warning(f"Error while attempting to sort dataframe: {str(e)}")
-            return df
+        """Sort dataframe by temporal column if one exists."""
+        for col in df.columns:
+            try:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+                if not df[col].isna().all():
+                    return df.sort_values(col)
+            except Exception:
+                continue
+        return df
 
     def _is_datetime_column(self, series: pd.Series) -> bool:
         """
@@ -731,381 +653,39 @@ class LLMPipeline:
     def suggest_visualizations(
         self,
         df: pd.DataFrame,
-        kpis: Optional[list] = None,
-        filename: str = "unknown_file",
-    ) -> Dict[str, Any]:
-        """Generate visualization suggestions for the dataset using LLM.
+        kpis: Optional[List[str]] = None,
+        filename: str = "unknown",
+    ) -> Dict:
+        """Generate visualization specifications for the dataset."""
+        try:
+            # Get visualization suggestions from LLM
+            viz_specs = self._get_visualization_suggestions(df, kpis)
 
-        Args:
-            df (pd.DataFrame): Dataset to visualize
-            kpis (list, optional): List of KPI columns to focus on
-            filename (str): Name of the original data file
-        """
+            # Save visualization specs
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            viz_specs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "llm_responses")
+            os.makedirs(viz_specs_dir, exist_ok=True)
+            
+            # Add metadata
+            output = {
+                "visualization_specs": viz_specs,
+                "timestamp": timestamp,
+                "model": self.model_name,
+                "provider": "local" if self.use_local else "external",
+                "dataset_filename": filename
+            }
+            
+            # Save to file
+            output_file = os.path.join(viz_specs_dir, f"viz_specs_{timestamp}.json")
+            with open(output_file, "w") as f:
+                json.dump(output, f, indent=2, cls=NumpyJSONEncoder)
+            
+            return viz_specs
 
-        def _suggest(df: pd.DataFrame):
-            logger.info("Starting visualization suggestions process")
-            try:
-                # Sort the dataframe chronologically if possible
-                df = self._sort_dataframe_chronologically(df)
-
-                # Get column metadata with improved datetime detection
-                logger.info("Creating column metadata")
-                column_metadata = {
-                    col: {
-                        "dtype": str(df[col].dtype),
-                        "unique_count": self._serialize_for_json(df[col].nunique()),
-                        "null_count": self._serialize_for_json(df[col].isnull().sum()),
-                        "is_temporal": self._is_datetime_column(df[col]),
-                        "is_numeric": pd.api.types.is_numeric_dtype(df[col]),
-                        "is_categorical": pd.api.types.is_categorical_dtype(df[col])
-                        or (df[col].nunique() / len(df) < 0.05),
-                        "sample_values": [
-                            self._serialize_for_json(v) for v in df[col].head().tolist()
-                        ],
-                    }
-                    for col in df.columns
-                }
-
-                logger.info("Column metadata created successfully")
-
-                # Generate the prompt
-                sample_data = df.head(3).to_string()
-
-                prompt = prompts.create_visualization_prompt(
-                    column_metadata, sample_data, kpis
-                )
-
-                logger.info("Generated visualization prompt")
-
-                # Query model and save response
-                if self.use_local:
-                    response = self._query_local(prompt)
-                else:
-                    response = self._query_api(prompt)
-
-                logger.info("Received visualization response")
-
-                # Extract and clean JSON from the response
-                logger.info("Extracting JSON from response")
-
-                # Find JSON structure with better error handling
-                def extract_json_from_response(self, response: str) -> Dict[str, Any]:
-                    """Extract and parse JSON from the LLM response, with better error handling and JSON fixing."""
-                    try:
-                        # If response is already a dict, return it
-                        if isinstance(response, dict):
-                            return response
-
-                        # First try to find JSON between triple backticks
-                        json_match = re.search(
-                            r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", response
-                        )
-                        if json_match:
-                            json_str = json_match.group(1)
-                        else:
-                            # If no backticks found, try to find a JSON object directly
-                            json_match = re.search(r"\{[\s\S]*\}", response)
-                            if json_match:
-                                json_str = json_match.group(0)
-                            else:
-                                raise ValueError("No JSON object found in response")
-
-                        # Common JSON fixes
-                        json_str = json_str.replace(
-                            "None", "null"
-                        )  # Replace Python None with JSON null
-                        json_str = re.sub(
-                            r",(\s*[}\]])", r"\1", json_str
-                        )  # Remove trailing commas
-                        json_str = re.sub(
-                            r"(\w+):", r'"\1":', json_str
-                        )  # Quote unquoted keys
-
-                        # Fix missing commas between fields
-                        json_str = re.sub(r'"\s*\n\s*"', '",\n"', json_str)
-                        json_str = re.sub(r'}\s*\n\s*"', '},\n"', json_str)
-
-                        # Try to parse the fixed JSON
-                        try:
-                            return json.loads(json_str)
-                        except json.JSONDecodeError as e:
-                            logger.warning(f"Initial JSON parsing failed: {str(e)}")
-
-                            # Additional fixes for specific issues
-                            if "Expecting value" in str(e):
-                                # Try to fix missing values
-                                json_str = re.sub(r":\s*,", ": null,", json_str)
-                                json_str = re.sub(r":\s*}", ": null}", json_str)
-
-                            # Try parsing again after additional fixes
-                            return json.loads(json_str)
-
-                    except Exception as e:
-                        logger.error(f"JSON parsing error: {str(e)}")
-
-                        # Last resort: try ast.literal_eval
-                        try:
-                            logger.info("Attempting to parse with ast.literal_eval")
-                            import ast
-
-                            # Replace null with None for Python parsing
-                            if isinstance(response, str):
-                                response = response.replace("null", "None")
-                            parsed = ast.literal_eval(str(response))
-                            return parsed
-                        except Exception as e2:
-                            logger.error(
-                                f"Failed to parse JSON even with ast.literal_eval: {str(e2)}"
-                            )
-                            raise ValueError(
-                                f"Could not parse response as JSON: {str(e)}"
-                            )
-
-                def clean_json_str(json_str: Any) -> Any:
-                    """Clean JSON string or return the input if it's already parsed."""
-                    # If input is already a dict, return it
-                    if isinstance(json_str, dict):
-                        return json_str
-
-                    # If input is a string, clean it
-                    if isinstance(json_str, str):
-                        # Remove any markdown formatting
-                        json_str = json_str.replace("```json", "").replace("```", "")
-
-                        # Remove any control characters
-                        json_str = "".join(
-                            char
-                            for char in json_str
-                            if ord(char) >= 32 or char in "\n\r\t"
-                        )
-
-                        # Fix common JSON formatting issues
-                        json_str = json_str.replace("\n", " ").replace("\r", " ")
-                        json_str = json_str.replace("\\n", " ").replace("\\r", " ")
-                        json_str = json_str.strip()
-
-                    return json_str
-
-                try:
-                    # If response is already a dict, use it directly
-                    if isinstance(response, dict):
-                        viz_specs = response
-                    else:
-                        # Extract JSON from string response
-                        json_str = extract_json_from_response(self, response)
-                        if isinstance(json_str, dict):
-                            viz_specs = json_str
-                        else:
-                            json_str = clean_json_str(json_str)
-                            viz_specs = json.loads(json_str)
-
-                    logger.info(
-                        f"Successfully parsed JSON with {len(viz_specs)} visualization specifications"
-                    )
-
-                except json.JSONDecodeError as je:
-                    logger.error(f"JSON parsing error: {str(je)}")
-                    logger.debug(f"Problematic JSON string: {response}")
-
-                    # Attempt to fix common JSON issues
-                    try:
-                        # Try eval as a last resort (safe for dict literals)
-                        import ast
-
-                        viz_specs = ast.literal_eval(str(response))
-                        logger.info("Successfully parsed JSON using ast.literal_eval")
-                    except Exception:
-                        logger.error("Failed to parse JSON even with ast.literal_eval")
-                        return {}
-
-                # Validate the visualization specifications
-                if not isinstance(viz_specs, dict):
-                    logger.error("Parsed result is not a dictionary")
-                    return {}
-
-                # Add metadata to each visualization
-                logger.info("Adding metadata to visualization specifications")
-                validated_specs = {}
-
-                for viz_id, viz_spec in viz_specs.items():
-                    # Ensure required fields are present
-                    if not all(key in viz_spec for key in ["type", "title"]):
-                        logger.warning(
-                            f"Skipping invalid visualization spec {viz_id}: missing required fields"
-                        )
-                        continue
-
-                    # Validate that referenced columns exist in the dataframe
-                    x_col = str(viz_spec.get("x", ""))
-                    y_col = str(viz_spec.get("y", ""))
-                    color_col = str(viz_spec.get("color", ""))
-
-                    # Skip visualization if it references non-existent columns
-                    if x_col and x_col not in df.columns:
-                        logger.warning(
-                            f"Skipping visualization {viz_id}: x-axis column '{x_col}' does not exist"
-                        )
-                        continue
-                    
-                    # For non-histogram/pie charts, validate y column exists
-                    if viz_spec.get("type", "").lower() not in ["histogram", "pie"] and y_col and y_col not in df.columns:
-                        logger.warning(
-                            f"Skipping visualization {viz_id}: y-axis column '{y_col}' does not exist"
-                        )
-                        continue
-
-                    # Validate color column if specified
-                    if color_col and color_col not in ["", "none", "null", None] and color_col not in df.columns:
-                        logger.warning(
-                            f"Skipping visualization {viz_id}: color column '{color_col}' does not exist"
-                        )
-                        continue
-
-                    # Clean and validate the specification
-                    cleaned_spec = {
-                        "type": str(viz_spec.get("type", "")).lower(),
-                        "x": str(viz_spec.get("x", "")),
-                        "y": str(viz_spec.get("y", "")),
-                        "color": str(viz_spec.get("color", "")),
-                        "title": str(viz_spec.get("title", "")),
-                        "description": str(viz_spec.get("description", "")),
-                        "insight": str(viz_spec.get("insight", viz_spec.get("description", ""))),  # Use description as fallback for insight
-                        "parameters": viz_spec.get("parameters", {}) or {},  # Ensure it's always a dictionary
-                    }
-
-                    # Ensure insight is meaningful
-                    if not cleaned_spec["insight"] or cleaned_spec["insight"].lower() in ["none", "null", ""]:
-                        # Generate insight from description if available
-                        desc = cleaned_spec["description"].lower()
-                        if desc and desc not in ["none", "null", ""]:
-                            # Extract quantitative information if present
-                            numbers = re.findall(r'\d+(?:\.\d+)?', desc)
-                            comparisons = re.findall(r'(more|less|higher|lower|increase|decrease|compared)', desc)
-                            
-                            insight = desc
-                            if numbers or comparisons:
-                                # Add actionable context if not present
-                                if not any(term in desc for term in ["should", "could", "recommend", "suggest", "consider", "may want to"]):
-                                    insight = f"Based on this visualization, you may want to consider that {desc}"
-                            cleaned_spec["insight"] = insight
-                        else:
-                            # Generate basic insight based on chart type and columns
-                            chart_type = cleaned_spec["type"]
-                            x_col = cleaned_spec["x"]
-                            y_col = cleaned_spec["y"]
-                            
-                            if chart_type == "scatter":
-                                cleaned_spec["insight"] = f"This scatter plot reveals the relationship between {x_col} and {y_col}, which could help identify patterns or correlations."
-                            elif chart_type == "bar":
-                                cleaned_spec["insight"] = f"This bar chart shows the distribution of {y_col} across different {x_col} categories, highlighting key differences."
-                            elif chart_type == "line":
-                                cleaned_spec["insight"] = f"This line chart tracks changes in {y_col} over {x_col}, helping identify trends and patterns over time."
-                            elif chart_type == "histogram":
-                                cleaned_spec["insight"] = f"This histogram shows the distribution of {x_col}, which can help identify common values and outliers."
-                            elif chart_type == "pie":
-                                cleaned_spec["insight"] = f"This pie chart breaks down the composition of {x_col}, showing the relative proportions of each category."
-                            else:
-                                cleaned_spec["insight"] = f"This visualization shows the relationship between {x_col} and {y_col}."
-
-                    # Replace "None" color with default color
-                    if cleaned_spec["color"].lower() in ["none", "null", "", None]:
-                        cleaned_spec["color"] = "#636EFA"  # Default Plotly blue
-
-                    # Add metadata
-                    cleaned_spec["metadata"] = {
-                        "x_meta": column_metadata.get(cleaned_spec["x"], {}),
-                        "y_meta": column_metadata.get(cleaned_spec["y"], {}),
-                        "color_meta": column_metadata.get(cleaned_spec["color"], {}),
-                    }
-
-                    # Add default parameters
-                    cleaned_spec["parameters"].update(
-                        {"height": 400, "template": "plotly", "opacity": 0.8}
-                    )
-
-                    validated_specs[viz_id] = cleaned_spec
-
-                # Save visualization specifications with model name and filename in the metadata
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                clean_model_name = re.sub(r"[^\w\-]", "_", self.model_name)
-                
-                # Ensure responses directory exists
-                os.makedirs(self.responses_dir, exist_ok=True)
-                
-                viz_specs_file = os.path.join(
-                    self.responses_dir,
-                    f"viz_specs_{clean_model_name}_{timestamp}.json"
-                )
-
-                try:
-                    # Convert any non-serializable objects to strings
-                    serializable_metadata = {}
-                    for col, meta in column_metadata.items():
-                        serializable_metadata[str(col)] = {
-                            k: str(v) if not isinstance(v, (bool, int, float, list, dict)) else v
-                            for k, v in meta.items()
-                        }
-
-                    specs_data = {
-                        "timestamp": timestamp,
-                        "model": self.model_name,
-                        "provider": "local" if self.use_local else "api",
-                        "dataset_filename": filename,
-                        "column_metadata": serializable_metadata,
-                        "visualization_specs": validated_specs,
-                    }
-
-                    with open(viz_specs_file, "w", encoding="utf-8") as f:
-                        json.dump(specs_data, f, indent=2, ensure_ascii=False, default=str)
-                    
-                    logger.info(f"Successfully saved visualization specifications to {viz_specs_file}")
-                    
-                    # Verify file was created
-                    if os.path.exists(viz_specs_file):
-                        logger.info(f"Verified: File exists at {viz_specs_file}")
-                        logger.info(f"File size: {os.path.getsize(viz_specs_file)} bytes")
-                    else:
-                        logger.error(f"File was not created at {viz_specs_file}")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to save visualization specifications: {str(e)}", exc_info=True)
-                    logger.error(f"Attempted to save to: {viz_specs_file}")
-
-                # Add this before returning validated_specs
-                try:
-                    benchmark = DashboardBenchmark(df)
-                    metrics = benchmark.evaluate_dashboard(list(validated_specs.values()))
-                    
-                    # Add benchmark scores to the specs_data
-                    specs_data["benchmark_scores"] = {
-                        'overall_score': metrics.overall_score(),
-                        'validity': metrics.validity,
-                        'relevance': metrics.relevance,
-                        'usefulness': metrics.usefulness,
-                        'diversity': metrics.diversity,
-                        'redundancy': metrics.redundancy
-                    }
-                    
-                    # Update the JSON file with benchmark scores
-                    with open(viz_specs_file, "r", encoding="utf-8") as f:
-                        existing_data = json.load(f)
-                    existing_data.update(specs_data)  # or merge data as needed
-                    with open(viz_specs_file, "w", encoding="utf-8") as f:
-                        json.dump(existing_data, f, indent=2, ensure_ascii=False, default=str)
-                    logger.info(f"Dashboard benchmark scores: {specs_data['benchmark_scores']}")
-                    
-                except Exception as e:
-                    logger.error(f"Error in dashboard benchmarking: {str(e)}", exc_info=True)
-
-                return validated_specs
-
-            except Exception as e:
-                logger.error(
-                    f"Error in visualization suggestion: {str(e)}", exc_info=True
-                )
-                return {}
-
-        return self._time_execution("suggest_visualizations", _suggest, df)
+        except Exception as e:
+            logger.error(f"Error in suggest_visualizations: {str(e)}")
+            logger.error("Full traceback:", exc_info=True)
+            raise
 
     def explain_pattern(self, df: pd.DataFrame, pattern_description: str) -> str:
         """Get LLM explanation for a specific pattern in the data.
@@ -1158,6 +738,226 @@ class LLMPipeline:
                 return "Error generating summary: " + str(e)
 
         return self._time_execution("summarize_analysis", _summarize)
+
+    def _get_visualization_suggestions(self, df: pd.DataFrame, kpis: Optional[List[str]] = None) -> Dict:
+        """Generate visualization suggestions for the dataset using LLM."""
+        logger.info("Starting visualization suggestions process")
+        try:
+            # Sort the dataframe chronologically if possible
+            df = self._sort_dataframe_chronologically(df)
+
+            # Initialize benchmark system for relationship analysis
+            from ai_dashboard_builder.benchmarking.dashboard_benchmark import DashboardBenchmark
+            benchmark = DashboardBenchmark(df)
+
+            # Get column metadata with improved datetime detection
+            logger.info("Creating column metadata")
+            column_metadata = {
+                col: {
+                    "dtype": str(df[col].dtype),
+                    "unique_count": self._serialize_for_json(df[col].nunique()),
+                    "null_count": self._serialize_for_json(df[col].isnull().sum()),
+                    "is_temporal": self._is_datetime_column(df[col]),
+                    "is_numeric": pd.api.types.is_numeric_dtype(df[col]),
+                    "is_categorical": pd.api.types.is_categorical_dtype(df[col])
+                    or (df[col].nunique() / len(df) < 0.05),
+                    "sample_values": [
+                        self._serialize_for_json(v) for v in df[col].head().tolist()
+                    ],
+                }
+                for col in df.columns
+            }
+
+            logger.info("Column metadata created successfully")
+
+            # Generate the prompt
+            sample_data = df.head(3).to_string()
+            prompt = prompts.create_visualization_prompt(column_metadata, sample_data, kpis)
+            logger.info("Generated visualization prompt")
+
+            # Query model and save response
+            if self.use_local:
+                response = self._query_local(prompt)
+            else:
+                response = self._query_api(prompt)
+
+            logger.info("Received visualization response")
+
+            # Extract and clean JSON from the response
+            logger.info("Extracting JSON from response")
+            viz_specs = self._extract_json_from_response(response)
+
+            # Validate the visualization specifications
+            if not isinstance(viz_specs, dict):
+                logger.error("Parsed result is not a dictionary")
+                return {}
+
+            # Add metadata to each visualization
+            logger.info("Adding metadata to visualization specifications")
+            validated_specs = {}
+
+            for viz_id, viz_spec in viz_specs.items():
+                # Ensure required fields are present
+                required_fields = ["type", "x", "y", "color", "title", "description"]
+                cleaned_spec = {}
+                
+                for field in required_fields:
+                    cleaned_spec[field] = viz_spec.get(field, "")
+                
+                # Add parameters if not present
+                cleaned_spec["parameters"] = viz_spec.get("parameters", {})
+                
+                # Process description and generate insight
+                desc = cleaned_spec.get("description", "").strip()
+                if desc:
+                    # Extract quantitative information if present
+                    numbers = re.findall(r'\d+(?:\.\d+)?', desc)
+                    comparisons = re.findall(r'(more|less|higher|lower|increase|decrease|compared)', desc)
+                    
+                    insight = desc
+                    if numbers or comparisons:
+                        # Add actionable context if not present
+                        if not any(term in desc for term in ["should", "could", "recommend", "suggest", "consider", "may want to"]):
+                            insight = f"Based on this visualization, you may want to consider that {desc}"
+                    cleaned_spec["insight"] = insight
+                else:
+                    # Generate basic insight based on chart type and columns
+                    chart_type = cleaned_spec["type"]
+                    x_col = cleaned_spec["x"]
+                    y_col = cleaned_spec["y"]
+                    
+                    if chart_type == "scatter":
+                        cleaned_spec["insight"] = f"This scatter plot reveals the relationship between {x_col} and {y_col}, which could help identify patterns or correlations."
+                    elif chart_type == "bar":
+                        cleaned_spec["insight"] = f"This bar chart shows the distribution of {y_col} across different {x_col} categories, highlighting key differences."
+                    elif chart_type == "line":
+                        cleaned_spec["insight"] = f"This line chart tracks changes in {y_col} over {x_col}, helping identify trends and patterns over time."
+                    elif chart_type == "histogram":
+                        cleaned_spec["insight"] = f"This histogram shows the distribution of {x_col}, which can help identify common values and outliers."
+                    elif chart_type == "pie":
+                        cleaned_spec["insight"] = f"This pie chart breaks down the composition of {x_col}, showing the relative proportions of each category."
+                    else:
+                        cleaned_spec["insight"] = f"This visualization shows the relationship between {x_col} and {y_col}."
+
+                # Generate relationship text between x and y variables
+                relationship_text = ""
+                relationship_significance = False
+                
+                x = cleaned_spec.get('x')
+                y = cleaned_spec.get('y')
+                
+                if x and y and x != y:  # Only proceed if both X and Y are present and different
+                    rel = benchmark._find_relationship(x, y)
+                    if rel:
+                        p_value = rel.get('p_value')
+                        stat = rel.get('stat')
+                        rel_type = rel.get('type')
+                        
+                        if p_value is not None:
+                            relationship_significance = p_value < 0.05
+                            
+                            if rel_type == 'numeric-numeric':
+                                relationship_text = f"Relationship: {x} and {y} show a correlation of {stat:.3f} (p={p_value:.3f})"
+                            elif rel_type == 'cat-cat':
+                                relationship_text = f"Association: Chi-square test between {x} and {y} shows χ²={stat:.3f} (p={p_value:.3f})"
+                            elif rel_type == 'numeric-cat':
+                                num_var = x if x in benchmark.numeric_cols else y
+                                cat_var = y if x in benchmark.numeric_cols else x
+                                relationship_text = f"Group differences: ANOVA between {num_var} (numeric) and {cat_var} (categorical) shows F={stat:.3f} (p={p_value:.3f})"
+
+                cleaned_spec["relationship_text"] = relationship_text
+                cleaned_spec["relationship_significance"] = relationship_significance
+
+                # Replace "None" color with default color
+                if cleaned_spec.get("color") is None or (isinstance(cleaned_spec.get("color"), str) and cleaned_spec["color"].lower() in ["none", "null", "", "nan"]):
+                    cleaned_spec["color"] = "#636EFA"  # Default Plotly blue
+
+                # Add metadata
+                cleaned_spec["metadata"] = {
+                    "x_meta": column_metadata.get(cleaned_spec["x"], {}),
+                    "y_meta": column_metadata.get(cleaned_spec["y"], {}),
+                    "color_meta": column_metadata.get(cleaned_spec.get("color"), {}),
+                }
+
+                # Add default parameters
+                cleaned_spec["parameters"].update(
+                    {"height": 400, "template": "plotly", "opacity": 0.8}
+                )
+
+                validated_specs[viz_id] = cleaned_spec
+
+            logger.info(f"Successfully validated {len(validated_specs)} visualization specifications")
+            return validated_specs
+
+        except Exception as e:
+            logger.error(f"Error in visualization suggestion: {str(e)}", exc_info=True)
+            return {}
+
+    def _extract_json_from_response(self, response: str) -> Dict[str, Any]:
+        """Extract and parse JSON from the LLM response, with better error handling and JSON fixing.
+        
+        Args:
+            response (str): The raw response from the LLM
+            
+        Returns:
+            Dict[str, Any]: The parsed JSON object
+        """
+        try:
+            # If response is already a dict, return it
+            if isinstance(response, dict):
+                return response
+
+            # First try to find JSON between triple backticks
+            json_match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", response)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # If no backticks found, try to find a JSON object directly
+                json_match = re.search(r"\{[\s\S]*\}", response)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    raise ValueError("No JSON object found in response")
+
+            # Common JSON fixes
+            json_str = json_str.replace("None", "null")  # Replace Python None with JSON null
+            json_str = re.sub(r",(\s*[}\]])", r"\1", json_str)  # Remove trailing commas
+            json_str = re.sub(r"(\w+):", r'"\1":', json_str)  # Quote unquoted keys
+            json_str = re.sub(r'"\s*\n\s*"', '",\n"', json_str)  # Fix missing commas between fields
+            json_str = re.sub(r'}\s*\n\s*"', '},\n"', json_str)  # Fix missing commas between objects
+
+            # Try to parse the fixed JSON
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Initial JSON parsing failed: {str(e)}")
+
+                # Additional fixes for specific issues
+                if "Expecting value" in str(e):
+                    # Try to fix missing values
+                    json_str = re.sub(r":\s*,", ": null,", json_str)
+                    json_str = re.sub(r":\s*}", ": null}", json_str)
+
+                # Try parsing again after additional fixes
+                return json.loads(json_str)
+
+        except Exception as e:
+            logger.error(f"JSON parsing error: {str(e)}")
+            logger.error("Problematic response:", response)
+
+            # Last resort: try ast.literal_eval
+            try:
+                logger.info("Attempting to parse with ast.literal_eval")
+                import ast
+
+                # Replace null with None for Python parsing
+                if isinstance(response, str):
+                    response = response.replace("null", "None")
+                parsed = ast.literal_eval(str(response))
+                return parsed
+            except Exception as e2:
+                logger.error(f"Failed to parse JSON even with ast.literal_eval: {str(e2)}")
+                raise ValueError(f"Could not parse response as JSON: {str(e)}")
 
 
 # Example usage:

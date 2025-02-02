@@ -12,10 +12,10 @@ import logging
 import json
 import os
 from pathlib import Path
+from scipy import stats
 
 # Add fallback for when scipy is not available
 try:
-    import scipy.stats as stats
     from scipy.stats import pearsonr, spearmanr, chi2_contingency
     SCIPY_AVAILABLE = True
 except ImportError:
@@ -60,11 +60,11 @@ class DashboardBenchmark:
         self.logger.info("Initializing DashboardBenchmark")
         self.df = df
         self.output_dir = output_dir or "dashboard_analysis"
+        self.relationship_cache = {}  # Initialize relationship cache
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
         self._analyze_data_types()
-        # Precompute relationships between columns for deeper analysis
-        self.relationships = self._analyze_relationships()
-        # Store relationships in JSON
+        self.relationships = []  # Initialize relationships list
+        self._analyze_relationships()  # This will populate self.relationships
         self._store_relationships()
 
     def _analyze_data_types(self):
@@ -75,105 +75,136 @@ class DashboardBenchmark:
         self.datetime_cols = self.df.select_dtypes(include=['datetime64']).columns
         self.logger.debug(f"Found {len(self.numeric_cols)} numeric, {len(self.categorical_cols)} categorical, and {len(self.datetime_cols)} datetime columns")
 
-    def _analyze_relationships(self) -> List[Dict]:
-        """Precompute interesting relationships (e.g., correlation, dependence) between columns."""
+    def _convert_to_native(self, value):
+        """Convert numpy types to native Python types."""
+        if isinstance(value, (np.int_, np.intc, np.intp, np.int8,
+            np.int16, np.int32, np.int64, np.uint8,
+            np.uint16, np.uint32, np.uint64)):
+            return int(value)
+        elif isinstance(value, (np.float_, np.float16, np.float32, np.float64)):
+            return float(value)
+        elif isinstance(value, np.bool_):
+            return bool(value)
+        elif isinstance(value, np.ndarray):
+            return value.tolist()
+        return value
+
+    def _find_relationship(self, var1: str, var2: str) -> Dict:
+        """Find the statistical relationship between two variables."""
+        try:
+            # Get relationship info from cache if available
+            cache_key = f"{var1}_{var2}"
+            if cache_key in self.relationship_cache:
+                return {k: self._convert_to_native(v) for k, v in self.relationship_cache[cache_key].items()}
+
+            # If both variables are numeric
+            if var1 in self.numeric_cols and var2 in self.numeric_cols:
+                correlation, p_value = pearsonr(
+                    self.df[var1].fillna(0),
+                    self.df[var2].fillna(0)
+                )
+                relationship = {
+                    'type': 'numeric-numeric',
+                    'stat': self._convert_to_native(correlation),
+                    'p_value': self._convert_to_native(p_value)
+                }
+
+            # If both variables are categorical
+            elif var1 in self.categorical_cols and var2 in self.categorical_cols:
+                contingency = pd.crosstab(self.df[var1], self.df[var2])
+                chi2, p_value, _, _ = chi2_contingency(contingency)
+                relationship = {
+                    'type': 'cat-cat',
+                    'stat': self._convert_to_native(chi2),
+                    'p_value': self._convert_to_native(p_value)
+                }
+
+            # If one variable is numeric and the other is categorical
+            elif (var1 in self.numeric_cols and var2 in self.categorical_cols) or \
+                 (var2 in self.numeric_cols and var1 in self.categorical_cols):
+                num_var = var1 if var1 in self.numeric_cols else var2
+                cat_var = var2 if var1 in self.numeric_cols else var1
+                
+                # Perform one-way ANOVA
+                categories = self.df[cat_var].unique()
+                samples = [self.df[self.df[cat_var] == cat][num_var].dropna() for cat in categories]
+                f_stat, p_value = stats.f_oneway(*samples) if len(samples) > 1 else (0, 1)
+                
+                relationship = {
+                    'type': 'numeric-cat',
+                    'stat': self._convert_to_native(f_stat),
+                    'p_value': self._convert_to_native(p_value)
+                }
+            else:
+                return None
+
+            # Cache the result
+            self.relationship_cache[cache_key] = relationship
+            return relationship
+
+        except Exception as e:
+            self.logger.error(f"Error finding relationship between {var1} and {var2}: {str(e)}")
+            return None
+
+    def _analyze_relationships(self):
+        """Analyze relationships between all pairs of columns."""
         self.logger.info("Analyzing relationships between columns")
-        if not SCIPY_AVAILABLE:
-            self.logger.warning("scipy not available - skipping relationship analysis")
-            return []
-
-        MIN_SAMPLE_SIZE = 2  # Minimum sample size for statistical tests
-        relationships = []
-        cols = self.df.columns
-        for col1, col2 in combinations(cols, 2):
-            self.logger.debug(f"Analyzing relationship between {col1} and {col2}")
-            col1_is_num = col1 in self.numeric_cols
-            col2_is_num = col2 in self.numeric_cols
-            rel = {
-                'columns': (col1, col2),
-                'type': None,
-                'stat': None, 
-                'p_value': None,
-                'strength': 0.0
-            }
-
-            try:
-                if col1_is_num and col2_is_num:
-                    # Numeric-numeric: compute Pearson & Spearman
-                    data1 = self.df[col1].dropna()
-                    data2 = self.df[col2].dropna()
-                    
-                    # Check sample size
-                    if len(data1) >= MIN_SAMPLE_SIZE and len(data2) >= MIN_SAMPLE_SIZE:
-                        # Ensure both arrays have the same length
-                        common_index = data1.index.intersection(data2.index)
-                        if len(common_index) >= MIN_SAMPLE_SIZE:
-                            data1 = data1[common_index]
-                            data2 = data2[common_index]
-                            pearson_r, pearson_p = pearsonr(data1, data2)
-                            spearman_r, spearman_p = spearmanr(data1, data2)
-                            self.logger.debug(f"Pearson correlation: {pearson_r:.3f} (p={pearson_p:.3f})")
-                            rel['type'] = 'numeric-numeric'
-                            rel['stat'] = pearson_r
-                            rel['p_value'] = pearson_p
-                            rel['strength'] = abs(pearson_r)
-                else:
-                    # At least one is categorical
-                    col1_is_cat = col1 in self.categorical_cols
-                    col2_is_cat = col2 in self.categorical_cols
-                    
-                    if col1_is_cat and col2_is_cat:
-                        # Remove NaN values and ensure common indices
-                        data = self.df[[col1, col2]].dropna()
-                        if len(data) >= MIN_SAMPLE_SIZE:
-                            contingency = pd.crosstab(data[col1], data[col2])
-                            if contingency.size > 1:  # Ensure we have at least 2 categories
-                                chi2, p, _, _ = chi2_contingency(contingency)
-                                rel['type'] = 'cat-cat'
-                                rel['stat'] = chi2
-                                rel['p_value'] = p
-                                rel['strength'] = chi2  # or a normalized measure
-                    else:
-                        # numeric-categorical
-                        numeric_col = col1 if col1_is_num else col2
-                        cat_col = col2 if col1_is_num else col1
-                        data = self.df[[numeric_col, cat_col]].dropna()
-                        
-                        if len(data) >= MIN_SAMPLE_SIZE:
-                            # Group data and check if we have enough samples per group
-                            groups = [group for name, group in data.groupby(cat_col)[numeric_col] if len(group) >= MIN_SAMPLE_SIZE]
-                            if len(groups) >= 2:  # Need at least 2 groups for ANOVA
-                                try:
-                                    f_stat, p_val = stats.f_oneway(*groups)
-                                    if not np.isnan(f_stat):  # Check if the result is valid
-                                        rel['type'] = 'numeric-cat'
-                                        rel['stat'] = f_stat
-                                        rel['p_value'] = p_val
-                                        rel['strength'] = abs(f_stat)
-                                except Exception as e:
-                                    self.logger.debug(f"ANOVA failed: {str(e)}")
-
-            except Exception as e:
-                self.logger.error(f"Error analyzing relationship between {col1} and {col2}: {str(e)}")
-
-            relationships.append(rel)
         
-        self.logger.info(f"Completed relationship analysis. Found {len(relationships)} relationships")
-        return relationships
+        # Get all columns to analyze
+        columns = list(self.numeric_cols) + list(self.categorical_cols)
+        
+        # Find relationships between all pairs
+        for i, col1 in enumerate(columns):
+            for col2 in columns[i+1:]:
+                rel = self._find_relationship(col1, col2)
+                if rel:
+                    self.relationships.append({
+                        'var1': col1,
+                        'var2': col2,
+                        'relationship': rel
+                    })
+        
+        self.logger.info(f"Completed relationship analysis. Found {len(self.relationships)} relationships")
+        
+        # Store relationships data
+        self.logger.info("Storing relationships data")
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Convert all numpy types to native Python types before serialization
+        def convert_relationships(rels):
+            converted = []
+            for rel in rels:
+                converted.append({
+                    'var1': rel['var1'],
+                    'var2': rel['var2'],
+                    'relationship': {
+                        k: self._convert_to_native(v) for k, v in rel['relationship'].items()
+                    }
+                })
+            return converted
+        
+        with open(os.path.join(self.output_dir, 'relationships.json'), 'w') as f:
+            json.dump(convert_relationships(self.relationships), f, indent=2)
+        
+        self.logger.info(f"Stored relationships data in {os.path.join(self.output_dir, 'relationships.json')}")
 
     def _store_relationships(self):
         """Store relationships data in a JSON file."""
+        if not hasattr(self, 'relationships') or not self.relationships:
+            self.logger.warning("No relationships to store")
+            return
+
         self.logger.info("Storing relationships data")
         relationships_data = []
         
         for rel in self.relationships:
             # Convert numpy types to native Python types for JSON serialization
             clean_rel = {
-                'columns': rel['columns'],
-                'type': rel['type'],
-                'stat': float(rel['stat']) if rel['stat'] is not None else None,
-                'p_value': float(rel['p_value']) if rel['p_value'] is not None else None,
-                'strength': float(rel['strength'])
+                'var1': rel['var1'],
+                'var2': rel['var2'],
+                'relationship': {
+                    k: self._convert_to_native(v) for k, v in rel['relationship'].items()
+                }
             }
             relationships_data.append(clean_rel)
             
@@ -181,13 +212,6 @@ class DashboardBenchmark:
         with open(output_path, 'w') as f:
             json.dump(relationships_data, f, indent=2)
         self.logger.info(f"Stored relationships data in {output_path}")
-
-    def _find_relationship(self, col1: str, col2: str) -> Optional[Dict]:
-        """Return the precomputed relationship dict for (col1, col2) if it exists."""
-        for rel in self.relationships:
-            if set(rel['columns']) == {col1, col2}:
-                return rel
-        return None
 
     def _evaluate_chart_validity(self, chart: Dict) -> float:
         """
@@ -479,11 +503,11 @@ class DashboardBenchmark:
                         viz_relationships.append({
                             'viz_index': i,
                             'relationship': {
-                                'columns': rel['columns'],
+                                'var1': rel['var1'],
+                                'var2': rel['var2'],
                                 'type': rel['type'],
-                                'stat': float(rel['stat']) if rel['stat'] is not None else None,
-                                'p_value': float(rel['p_value']) if rel['p_value'] is not None else None,
-                                'strength': float(rel['strength'])
+                                'stat': rel['stat'],
+                                'p_value': rel['p_value']
                             }
                         })
             

@@ -1213,84 +1213,7 @@ def analyze_data(
         from ai_dashboard_builder.benchmarking.dashboard_benchmark import DashboardBenchmark
         benchmark = DashboardBenchmark(df)
 
-        # Get relationships for each visualization and store with sorting info
-        viz_relationships = {}
-        viz_sorting_info = []
-        
-        for viz_id, viz_spec in viz_specs.items():
-            # Get all variables involved in the visualization
-            x = viz_spec.get('x')
-            y = viz_spec.get('y')
-            color = viz_spec.get('color')
-            size = viz_spec.get('size')
-            
-            # Store all variables used in this visualization
-            viz_vars = [var for var in [x, y, color, size] if var]
-            
-            # Initialize relationship info
-            relationship_text = ""
-            sort_value = float('-inf')
-            
-            # Find relationships between all pairs of variables
-            relationships = []
-            for i, var1 in enumerate(viz_vars):
-                for var2 in viz_vars[i+1:]:
-                    rel = benchmark._find_relationship(var1, var2) if var1 and var2 else None
-                    if rel:
-                        relationships.append({
-                            'var1': var1,
-                            'var2': var2,
-                            'relationship': rel
-                        })
-            
-            # Sort relationships by significance
-            relationships.sort(key=lambda x: x['relationship']['p_value'] if x['relationship'].get('p_value') is not None else 1)
-            
-            # Generate text for the most significant relationship
-            if relationships:
-                most_sig = relationships[0]
-                rel = most_sig['relationship']
-                var1, var2 = most_sig['var1'], most_sig['var2']
-                p_value = rel.get('p_value')
-                stat = rel.get('stat')
-                rel_type = rel.get('type')
-                
-                if p_value is not None:
-                    sort_value = (-float(p_value)) * abs(float(stat)) if stat is not None else -float(p_value)
-                
-                if rel_type == 'numeric-numeric':
-                    relationship_text = f"Relationship: {var1} and {var2} show a correlation of {stat:.3f} (p={p_value:.3f})"
-                elif rel_type == 'cat-cat':
-                    relationship_text = f"Association: Chi-square test between {var1} and {var2} shows χ²={stat:.3f} (p={p_value:.3f})"
-                elif rel_type == 'numeric-cat':
-                    num_var = var1 if var1 in benchmark.numeric_cols else var2
-                    cat_var = var2 if var1 in benchmark.numeric_cols else var1
-                    relationship_text = f"Group differences: ANOVA between {num_var} (numeric) and {cat_var} (categorical) shows F={stat:.3f} (p={p_value:.3f})"
-            
-            viz_relationships[viz_id] = {
-                'text': relationship_text,
-                'significance': relationships[0]['relationship']['p_value'] < 0.05 if relationships else False
-            }
-            
-            # Store sorting info
-            viz_sorting_info.append({
-                'viz_id': viz_id,
-                'sort_value': sort_value,
-                'figure': figures.get(viz_id)
-            })
-        
-        # Sort visualizations by significance and strength
-        viz_sorting_info.sort(key=lambda x: x['sort_value'], reverse=True)
-        
-        # Reorder figures based on sorting
-        sorted_figures = {
-            item['viz_id']: item['figure']
-            for item in viz_sorting_info
-            if item['figure'] is not None
-        }
-        figures = sorted_figures
-
-        # Create the visualization components with relationships (now sorted)
+        # Create the visualization components (without sorting)
         components = [
             dbc.Card(
                 [
@@ -1308,42 +1231,25 @@ def analyze_data(
                                                             dbc.Row(
                                                                 [
                                                                     dbc.Col(
-                                                                        dbc.Tabs(
-                                                                            [
-                                                                                dbc.Tab(
-                                                                                    label="Chart",
-                                                                                    tab_id=f"chart-tab-{i}",
-                                                                                ),
-                                                                                dbc.Tab(
-                                                                                    label="Code",
-                                                                                    tab_id=f"code-tab-{i}",
-                                                                                ),
-                                                                            ],
-                                                                            id={
-                                                                                "type": "tabs",
-                                                                                "index": i,
-                                                                            },
-                                                                            active_tab=f"chart-tab-{i}",
+                                                                        html.H5(
+                                                                            viz_specs[viz_id]["title"],
+                                                                            className="mb-0",
                                                                         ),
-                                                                        className="pe-0",
+                                                                        className="pe-4",
                                                                     ),
                                                                     dbc.Col(
-                                                                        html.Button(
-                                                                            "↗️",
+                                                                        dbc.Button(
+                                                                            html.I(className="fas fa-expand"),
                                                                             id={
-                                                                                "type": "maximize-btn",
+                                                                                "type": "expand-button",
                                                                                 "index": i,
                                                                             },
-                                                                            className="maximize-btn",
+                                                                            color="link",
+                                                                            size="sm",
                                                                             style={
-                                                                                "backgroundColor": "#f8f9fa",
-                                                                                "border": "2px solid #dee2e6",
-                                                                                "borderRadius": "4px",
-                                                                                "padding": "4px 8px",
-                                                                                "cursor": "pointer",
-                                                                                "opacity": 1,
-                                                                                "transition": "opacity 0.2s",
-                                                                                "boxShadow": "0 1px 3px rgba(0,0,0,0.1)",
+                                                                                "color": COLORS[
+                                                                                    "text_secondary"
+                                                                                ]
                                                                             },
                                                                         ),
                                                                         width="auto",
@@ -1370,13 +1276,13 @@ def analyze_data(
                                                                                     "displayModeBar": False
                                                                                 },
                                                                             ),
-                                                                            # Add relationship info using the correct viz_id
+                                                                            # Add relationship info from viz_specs
                                                                             html.Div(
                                                                                 [
                                                                                     html.Small(
-                                                                                        viz_relationships[viz_id]['text'],
+                                                                                        viz_specs[viz_id].get('relationship_text', ''),
                                                                                         style={
-                                                                                            "color": COLORS["primary"] if viz_relationships[viz_id]['significance'] else COLORS["text_secondary"],
+                                                                                            "color": COLORS["primary"] if viz_specs[viz_id].get('relationship_significance', False) else COLORS["text_secondary"],
                                                                                             "fontStyle": "italic",
                                                                                             "display": "block",
                                                                                             "marginTop": "8px",
@@ -1384,12 +1290,9 @@ def analyze_data(
                                                                                             "backgroundColor": f"{COLORS['background']}",
                                                                                             "borderRadius": "4px",
                                                                                             "border": f"1px solid {COLORS['divider']}"
-                                                                                        } if viz_relationships[viz_id]['text'] else {"display": "none"}
-                                                                                    ),
-                                                                                ],
-                                                                                style={
-                                                                                    "marginTop": "10px",
-                                                                                }
+                                                                                        } if viz_specs[viz_id].get('relationship_text') else {"display": "none"}
+                                                                                    )
+                                                                                ]
                                                                             ),
                                                                         ],
                                                                         id={
