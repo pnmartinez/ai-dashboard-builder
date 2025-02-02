@@ -1239,17 +1239,18 @@ def analyze_data(
                                                                     ),
                                                                     dbc.Col(
                                                                         dbc.Button(
-                                                                            html.I(className="fas fa-expand"),
+                                                                            html.I(className="fa fa-expand"),
                                                                             id={
-                                                                                "type": "expand-button",
+                                                                                "type": "maximize-btn",
                                                                                 "index": i,
                                                                             },
                                                                             color="link",
                                                                             size="sm",
                                                                             style={
-                                                                                "color": COLORS[
-                                                                                    "text_secondary"
-                                                                                ]
+                                                                                "color": COLORS["text_secondary"],
+                                                                                "border": "none",
+                                                                                "backgroundColor": "transparent",
+                                                                                "padding": "4px 8px",
                                                                             },
                                                                         ),
                                                                         width="auto",
