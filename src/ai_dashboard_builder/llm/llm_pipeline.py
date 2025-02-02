@@ -666,13 +666,31 @@ class LLMPipeline:
             viz_specs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "llm_responses")
             os.makedirs(viz_specs_dir, exist_ok=True)
             
+            # Initialize benchmark system for scoring
+            from ai_dashboard_builder.benchmarking.dashboard_benchmark import DashboardBenchmark
+            benchmark = DashboardBenchmark(df)
+            
+            # Evaluate dashboard and get metrics
+            metrics = benchmark.evaluate_dashboard(list(viz_specs.values()))
+            
+            # Get benchmark scores
+            benchmark_scores = {
+                "overall_score": metrics.overall_score(),
+                "validity": metrics.validity,
+                "relevance": metrics.relevance,
+                "usefulness": metrics.usefulness,
+                "diversity": metrics.diversity,
+                "redundancy": metrics.redundancy
+            }
+            
             # Add metadata
             output = {
                 "visualization_specs": viz_specs,
                 "timestamp": timestamp,
                 "model": self.model_name,
                 "provider": "local" if self.use_local else "external",
-                "dataset_filename": filename
+                "dataset_filename": filename,
+                "benchmark_scores": benchmark_scores
             }
             
             # Save to file
@@ -804,8 +822,10 @@ class LLMPipeline:
                 for field in required_fields:
                     cleaned_spec[field] = viz_spec.get(field, "")
                 
-                # Add parameters if not present
+                # Initialize parameters with defaults if not present
                 cleaned_spec["parameters"] = viz_spec.get("parameters", {})
+                if not isinstance(cleaned_spec["parameters"], dict):
+                    cleaned_spec["parameters"] = {}
                 
                 # Process description and generate insight
                 desc = cleaned_spec.get("description", "").strip()

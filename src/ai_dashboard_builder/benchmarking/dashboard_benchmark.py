@@ -358,19 +358,17 @@ class DashboardBenchmark:
         # Check for relationship context if applicable
         if chart.get('x') and chart.get('y'):
             rel = self._find_relationship(chart.get('x'), chart.get('y'))
-            if rel:
-                # If there's a significant relationship, check if it's mentioned
-                if rel['strength'] > 0.5:
-                    relationship_terms = []
-                    if rel['type'] == 'numeric-numeric':
-                        relationship_terms = ['correlation', 'relationship', 'associated']
-                    elif rel['type'] == 'numeric-cat':
-                        relationship_terms = ['difference', 'varies', 'depends']
-                    elif rel['type'] == 'cat-cat':
-                        relationship_terms = ['association', 'linked', 'connected']
-                        
-                    if any(term in description for term in relationship_terms):
-                        context_score += 0.15
+            if rel and rel.get('p_value', 1.0) < 0.05:  # Check for statistical significance
+                relationship_terms = []
+                if rel['type'] == 'numeric-numeric':
+                    relationship_terms = ['correlation', 'relationship', 'associated']
+                elif rel['type'] == 'numeric-cat':
+                    relationship_terms = ['difference', 'varies', 'depends']
+                elif rel['type'] == 'cat-cat':
+                    relationship_terms = ['association', 'linked', 'connected']
+                    
+                if any(term in description for term in relationship_terms):
+                    context_score += 0.15
         
         # Check for comparative context
         comparative_terms = ['more than', 'less than', 'compared to', 'relative to', 'whereas']
@@ -464,12 +462,14 @@ class DashboardBenchmark:
         penalty = 0.0
         total_charts = len(viz_specs)
         
-        # First pass: count occurrences of each unique visualization
+        # First pass
         for spec in viz_specs:
             # Create a key based on chart type and columns used
+            # Filter out None values before sorting
+            columns = [col for col in [spec.get('x'), spec.get('y')] if col is not None]
             key = (
                 spec.get('type', ''),
-                tuple(sorted([spec.get('x'), spec.get('y')]))
+                tuple(sorted(columns))
             )
             seen[key] = seen.get(key, 0) + 1
         
