@@ -340,12 +340,16 @@ app.layout = html.Div(
                                                                 "value": "mixtral-8x7b-32768",
                                                             },
                                                             {
+                                                                "label": "Groq Llama 3.1 8B",
+                                                                "value": "llama-3.1-8b-instant",
+                                                            },
+                                                            {
                                                                 "label": "Groq Llama 3.3 70b",
                                                                 "value": "llama-3.3-70b-specdec",
                                                             },
                                                             {
-                                                                "label": "Groq Gemma 7B",
-                                                                "value": "gemma-7b-it",
+                                                                "label": "Groq Gemma2 9B",
+                                                                "value": "gemma2-9b-it",
                                                             },
                                                             {
                                                                 "label": "Groq Deepseek 70B",
