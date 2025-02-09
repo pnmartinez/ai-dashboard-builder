@@ -343,21 +343,7 @@ class LLMPipeline:
             return f"Error: {error_msg}"
 
     def _query_api(self, prompt: str) -> str:
-        """Query external API based on selected model.
-
-        Handles different API providers (OpenAI, Anthropic, Mistral, Groq)
-        with appropriate rate limiting and error handling.
-
-        Args:
-            prompt (str): The prompt to send to the model
-
-        Returns:
-            str: Model's response or error message
-
-        Raises:
-            ValueError: If model is unsupported or API returns error
-        """
-        # Add rate limiting before making the API call
+        """Query external API based on selected model."""
         self._enforce_rate_limit()
 
         start_time = time.time()
@@ -372,24 +358,32 @@ class LLMPipeline:
                     "Content-Type": "application/json",
                 }
                 
+                # Base data dictionary
                 data = {
                     "model": self.model_name,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.7,
-                    "max_tokens": 2000,
                 }
+                
+                # Add model-specific parameters
+                if any(name in self.model_name.lower() for name in ["o1-mini", "o1-preview"]):
+                    # Increase completion tokens and use max context window for o1 models
+                    data["max_completion_tokens"] = 4000
+                    data["seed"] = 42  # Add deterministic output
+                else:
+                    data["max_tokens"] = 2000
+                    data["temperature"] = 0.7
                 
                 try:
                     response = requests.post(
                         "https://api.openai.com/v1/chat/completions",
                         headers=headers,
                         json=data,
-                        timeout=30
+                        timeout=60  # Increased timeout for longer responses
                     )
                     
                     logger.info(f"API Response Status: {response.status_code}")
                     logger.info(f"Raw Response: {response.text[:500]}...")
-                    
+
                     if response.status_code == 429:
                         error_data = response.json().get("error", {})
                         if error_data.get("code") == "insufficient_quota":
@@ -405,6 +399,13 @@ class LLMPipeline:
                     
                     response_json = response.json()
                     response_text = response_json["choices"][0]["message"]["content"]
+                    
+                    # Check for empty response
+                    if not response_text.strip():
+                        error_msg = "⚠️ Empty response from model. The input might be too long - try reducing the data size or using fewer columns."
+                        logger.error(error_msg)
+                        return f"Error: {error_msg}"
+                    
                     logger.info(f"Successfully extracted response text: {response_text[:100]}...")
                     
                 except requests.exceptions.Timeout:
@@ -713,8 +714,18 @@ class LLMPipeline:
             from ai_dashboard_builder.benchmarking.dashboard_benchmark import DashboardBenchmark
             benchmark = DashboardBenchmark(df)
             
+            # Convert list-type x and y values to strings for benchmarking
+            benchmark_specs = []
+            for spec in viz_specs.values():
+                benchmark_spec = spec.copy()
+                if isinstance(benchmark_spec.get('x'), list):
+                    benchmark_spec['x'] = benchmark_spec['x'][0]  # Use first column for validation
+                if isinstance(benchmark_spec.get('y'), list):
+                    benchmark_spec['y'] = benchmark_spec['y'][0]  # Use first column for validation
+                benchmark_specs.append(benchmark_spec)
+            
             # Evaluate dashboard and get metrics
-            metrics = benchmark.evaluate_dashboard(list(viz_specs.values()))
+            metrics = benchmark.evaluate_dashboard(benchmark_specs)
             
             # Get benchmark scores
             benchmark_scores = {
@@ -940,11 +951,17 @@ class LLMPipeline:
                 if cleaned_spec.get("color") is None or (isinstance(cleaned_spec.get("color"), str) and cleaned_spec["color"].lower() in ["none", "null", "", "nan"]):
                     cleaned_spec["color"] = "#636EFA"  # Default Plotly blue
 
+                # Handle metadata for x and y values that might be lists
+                def get_column_metadata(col_name):
+                    if isinstance(col_name, list):
+                        return [column_metadata.get(c, {}) for c in col_name]
+                    return column_metadata.get(col_name, {})
+
                 # Add metadata
                 cleaned_spec["metadata"] = {
-                    "x_meta": column_metadata.get(cleaned_spec["x"], {}),
-                    "y_meta": column_metadata.get(cleaned_spec["y"], {}),
-                    "color_meta": column_metadata.get(cleaned_spec.get("color"), {}),
+                    "x_meta": get_column_metadata(cleaned_spec["x"]),
+                    "y_meta": get_column_metadata(cleaned_spec["y"]),
+                    "color_meta": get_column_metadata(cleaned_spec.get("color")) if cleaned_spec.get("color") else {},
                 }
 
                 # Add default parameters
@@ -958,17 +975,18 @@ class LLMPipeline:
             return validated_specs
 
         except Exception as e:
-            logger.error(f"Error in visualization suggestion: {str(e)}", exc_info=True)
+            logger.error(f"Error in visualization suggestion: {str(e)}")
+            logger.error("Full traceback:", exc_info=True)
             return {}
 
     def _extract_json_from_response(self, response: str) -> Dict[str, Any]:
-        """Extract and parse JSON from the LLM response, with better error handling and JSON fixing.
+        """Extract and parse JSON from the LLM response, with robust error handling.
         
         Args:
             response (str): The raw response from the LLM
             
         Returns:
-            Dict[str, Any]: The parsed JSON object
+            Dict[str, Any]: The parsed JSON object or a default visualization if parsing fails
         """
         try:
             # If response is already a dict, return it
@@ -985,7 +1003,8 @@ class LLMPipeline:
                 if json_match:
                     json_str = json_match.group(0)
                 else:
-                    raise ValueError("No JSON object found in response")
+                    logger.error("No JSON object found in response")
+                    return self._create_default_visualization()
 
             # Common JSON fixes
             json_str = json_str.replace("None", "null")  # Replace Python None with JSON null
@@ -993,39 +1012,71 @@ class LLMPipeline:
             json_str = re.sub(r"(\w+):", r'"\1":', json_str)  # Quote unquoted keys
             json_str = re.sub(r'"\s*\n\s*"', '",\n"', json_str)  # Fix missing commas between fields
             json_str = re.sub(r'}\s*\n\s*"', '},\n"', json_str)  # Fix missing commas between objects
-
+            
+            # Fix truncated JSON by completing missing structures
+            open_braces = json_str.count("{")
+            close_braces = json_str.count("}")
+            if open_braces > close_braces:
+                json_str += "}" * (open_braces - close_braces)
+            
             # Try to parse the fixed JSON
             try:
                 return json.loads(json_str)
             except json.JSONDecodeError as e:
                 logger.warning(f"Initial JSON parsing failed: {str(e)}")
-
+                
                 # Additional fixes for specific issues
                 if "Expecting value" in str(e):
-                    # Try to fix missing values
                     json_str = re.sub(r":\s*,", ": null,", json_str)
                     json_str = re.sub(r":\s*}", ": null}", json_str)
+                
+                # Try to extract any complete visualization specs
+                try:
+                    # Find all complete viz specs
+                    viz_specs = {}
+                    viz_pattern = r'"viz_\d+":\s*\{[^}]*\}'
+                    matches = re.finditer(viz_pattern, json_str)
+                    
+                    for match in matches:
+                        try:
+                            viz_json = "{" + match.group(0) + "}"
+                            viz_data = json.loads(viz_json)
+                            viz_specs.update(viz_data)
+                        except json.JSONDecodeError:
+                            continue
+                    
+                    if viz_specs:
+                        logger.info(f"Recovered {len(viz_specs)} complete visualization specs")
+                        return viz_specs
+                    
+                except Exception as viz_error:
+                    logger.error(f"Failed to extract partial visualizations: {str(viz_error)}")
 
-                # Try parsing again after additional fixes
-                return json.loads(json_str)
+                # If all else fails, return a default visualization
+                logger.warning("Falling back to default visualization")
+                return self._create_default_visualization()
 
         except Exception as e:
-            logger.error(f"JSON parsing error: {str(e)}")
-            logger.error("Problematic response:", response)
+            logger.error(f"Error extracting JSON: {str(e)}")
+            logger.error("Full traceback:", exc_info=True)
+            return self._create_default_visualization()
 
-            # Last resort: try ast.literal_eval
-            try:
-                logger.info("Attempting to parse with ast.literal_eval")
-                import ast
-
-                # Replace null with None for Python parsing
-                if isinstance(response, str):
-                    response = response.replace("null", "None")
-                parsed = ast.literal_eval(str(response))
-                return parsed
-            except Exception as e2:
-                logger.error(f"Failed to parse JSON even with ast.literal_eval: {str(e2)}")
-                raise ValueError(f"Could not parse response as JSON: {str(e)}")
+    def _create_default_visualization(self) -> Dict[str, Any]:
+        """Create a default visualization when parsing fails."""
+        return {
+            "viz_1": {
+                "type": "bar",
+                "x": self.df.columns[0] if hasattr(self, 'df') and len(self.df.columns) > 0 else "column",
+                "y": "count",
+                "color": None,
+                "title": "Data Overview",
+                "description": "Basic overview of the dataset.",
+                "parameters": {
+                    "orientation": "v",
+                    "aggregation": "count"
+                }
+            }
+        }
 
 
 # Example usage:
