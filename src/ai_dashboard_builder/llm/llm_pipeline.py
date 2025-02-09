@@ -79,7 +79,7 @@ class LLMPipeline:
         
         # Get API key from environment based on model type
         if not use_local:
-            if "gpt" in model_name.lower():
+            if any(name in model_name.lower() for name in ["gpt", "o1"]):
                 self.api_key = os.getenv("OPENAI_API_KEY")
                 key_type = "OpenAI"
             elif "claude" in model_name.lower():
@@ -208,18 +208,13 @@ class LLMPipeline:
         Returns:
             float: Number of seconds to wait between API calls
         """
-        if "gpt" in self.model_name:
+        if any(name in self.model_name.lower() for name in ["gpt", "o1"]):
             return self.rate_limits["openai"]
-        elif "claude" in self.model_name:
+        elif "claude" in self.model_name.lower():
             return self.rate_limits["anthropic"]
-        elif "mistral" in self.model_name:
+        elif "mistral" in self.model_name.lower():
             return self.rate_limits["mistral"]
-        elif (
-            "mixtral" in self.model_name
-            or "groq" in self.model_name
-            or "llama" in self.model_name
-            or "gemma" in self.model_name
-        ):
+        elif any(name in self.model_name.lower() for name in ["mixtral", "groq", "llama", "gemma"]):
             return self.rate_limits["groq"]
         return self.rate_limits["default"]
 
@@ -369,18 +364,62 @@ class LLMPipeline:
         try:
             response_text = ""
 
-            if "gpt" in self.model_name:
-                # OpenAI GPT API (>=1.0.0)
-                from openai import OpenAI
-
-                client = OpenAI(api_key=self.api_key)
-                response = client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.7,
-                    max_tokens=2000,
-                )
-                response_text = response.choices[0].message.content
+            if any(name in self.model_name.lower() for name in ["gpt", "o1"]):
+                logger.info(f"Making OpenAI API request for model: {self.model_name}")
+                
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                }
+                
+                data = {
+                    "model": self.model_name,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                    "max_tokens": 2000,
+                }
+                
+                try:
+                    response = requests.post(
+                        "https://api.openai.com/v1/chat/completions",
+                        headers=headers,
+                        json=data,
+                        timeout=30
+                    )
+                    
+                    logger.info(f"API Response Status: {response.status_code}")
+                    logger.info(f"Raw Response: {response.text[:500]}...")
+                    
+                    if response.status_code == 429:
+                        error_data = response.json().get("error", {})
+                        if error_data.get("code") == "insufficient_quota":
+                            error_msg = "⚠️ API Quota Exceeded: Your OpenAI API key has exceeded its quota. Please check your billing details at platform.openai.com or try a different API key."
+                        else:
+                            error_msg = "⚠️ Rate Limit: Too many requests. Please try again in a few moments."
+                        logger.error(error_msg)
+                        return f"Error: {error_msg}"
+                    elif response.status_code != 200:
+                        error_msg = f"⚠️ OpenAI API Error ({response.status_code}): {response.text}"
+                        logger.error(error_msg)
+                        return f"Error: {error_msg}"
+                    
+                    response_json = response.json()
+                    response_text = response_json["choices"][0]["message"]["content"]
+                    logger.info(f"Successfully extracted response text: {response_text[:100]}...")
+                    
+                except requests.exceptions.Timeout:
+                    error_msg = "⚠️ Request Timeout: The API request took too long to respond. Please try again."
+                    logger.error(error_msg)
+                    return f"Error: {error_msg}"
+                except requests.exceptions.RequestException as e:
+                    error_msg = f"⚠️ Network Error: Could not connect to OpenAI API. {str(e)}"
+                    logger.error(error_msg)
+                    return f"Error: {error_msg}"
+                except Exception as e:
+                    error_msg = f"⚠️ OpenAI API Error: {str(e)}"
+                    logger.error(error_msg)
+                    logger.error("Full error details:", exc_info=True)
+                    return f"Error: {error_msg}"
 
             elif "claude" in self.model_name:
                 # Anthropic Claude API
@@ -660,6 +699,10 @@ class LLMPipeline:
         try:
             # Get visualization suggestions from LLM
             viz_specs = self._get_visualization_suggestions(df, kpis)
+            
+            # If we got an error string instead of viz specs, return it directly
+            if isinstance(viz_specs, str) and viz_specs.startswith("Error:"):
+                return viz_specs
 
             # Save visualization specs
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -701,9 +744,10 @@ class LLMPipeline:
             return viz_specs
 
         except Exception as e:
-            logger.error(f"Error in suggest_visualizations: {str(e)}")
+            error_msg = str(e)
+            logger.error(f"Error in suggest_visualizations: {error_msg}")
             logger.error("Full traceback:", exc_info=True)
-            raise
+            return f"Error: {error_msg}"
 
     def explain_pattern(self, df: pd.DataFrame, pattern_description: str) -> str:
         """Get LLM explanation for a specific pattern in the data.
@@ -801,6 +845,10 @@ class LLMPipeline:
 
             logger.info("Received visualization response")
 
+            # If response starts with "Error:", return it directly
+            if isinstance(response, str) and response.startswith("Error:"):
+                return response
+
             # Extract and clean JSON from the response
             logger.info("Extracting JSON from response")
             viz_specs = self._extract_json_from_response(response)
@@ -808,7 +856,7 @@ class LLMPipeline:
             # Validate the visualization specifications
             if not isinstance(viz_specs, dict):
                 logger.error("Parsed result is not a dictionary")
-                return {}
+                return "Error: Failed to generate valid visualization specifications"
 
             # Add metadata to each visualization
             logger.info("Adding metadata to visualization specifications")

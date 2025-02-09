@@ -319,6 +319,19 @@ app.layout = html.Div(
                                                                 "value": "gpt-4o-mini",
                                                             },
                                                             {
+                                                                "label": "GPT-4o",
+                                                                "value": "gpt-4o",
+                                                            },
+                                                            {
+                                                                "label": "o1-mini",
+                                          
+                                                                "value": "o1-mini",
+                                                            },
+                                                            {
+                                                                "label": "o1-preview",
+                                                                "value": "o1-preview",
+                                                            },
+                                                            {
                                                                 "label": "GPT-3.5-turbo",
                                                                 "value": "gpt-3.5-turbo",
                                                             },
@@ -1126,42 +1139,28 @@ def analyze_data(
         api_key = input_api_key or get_api_key_from_env_file(model)
         
         if provider == "external" and not api_key:
-            raise ValueError("API key is required for external provider")
+            return html.Div([
+                dbc.Alert(
+                    "API key is required for external provider",
+                    color="danger",
+                    dismissable=True,
+                    style={"maxWidth": "800px", "margin": "20px auto"}
+                )
+            ]), False, json_data
 
         data_store = json.loads(json_data)
         df_full = pd.read_json(io.StringIO(data_store["full_data"]), orient="split")
         filename = data_store.get("filename", "unknown_file")
-
-        # Remove the preview limit - use full dataset
         df = df_full
 
-        imported_viz_specs = data_store.get("imported_viz_specs")
-
-        if imported_viz_specs:
-            set_progress(
-                html.Div(
-                    "Using imported visualization specifications...",
-                    style={"color": COLORS["info"]}
-                )
+        set_progress(
+            html.Div(
+                "Initializing analysis pipeline...", 
+                style={"color": COLORS["info"]}
             )
-            viz_specs = imported_viz_specs
-            dashboard_builder = DashboardBuilder(df, COLORS)
-            figures = dashboard_builder.create_all_figures(viz_specs)
+        )
 
-            analysis = None
-            summary = None
-
-        else:
-            if provider == "external" and not api_key:
-                raise ValueError("API key is required for external provider")
-
-            set_progress(
-                html.Div(
-                    "Initializing analysis pipeline...", 
-                    style={"color": COLORS["info"]}
-                )
-            )
-
+        try:
             if provider == "local":
                 pipeline = LLMPipeline(model_name="llama3.1", use_local=True)
             else:
@@ -1176,6 +1175,24 @@ def analyze_data(
                     )
                 )
                 analysis = pipeline.analyze_dataset(df, kpis)
+                if isinstance(analysis, str) and analysis.startswith("Error:"):
+                    return html.Div([
+                        dbc.Alert(
+                            analysis[7:],  # Remove "Error: " prefix
+                            color="danger",
+                            dismissable=True,
+                            style={"maxWidth": "800px", "margin": "20px auto"}
+                        ),
+                        dbc.Alert(
+                            [
+                                html.I(className="fas fa-info-circle me-2"),
+                                "Try switching to a different model or API key.",
+                            ],
+                            color="info",
+                            dismissable=True,
+                            style={"maxWidth": "800px", "margin": "20px auto"}
+                        )
+                    ]), False, json_data
             else:
                 analysis = None
 
@@ -1185,23 +1202,44 @@ def analyze_data(
                     style={"color": COLORS["info"]}
                 )
             )
+            
             viz_specs = pipeline.suggest_visualizations(df, kpis, filename=filename)
-
-            data_store["visualization_specs"] = viz_specs
+            
+            # Check if viz_specs is an error message
+            if isinstance(viz_specs, str) and viz_specs.startswith("Error:"):
+                return html.Div([
+                    dbc.Alert(
+                        viz_specs[7:],  # Remove "Error: " prefix
+                        color="danger",
+                        dismissable=True,
+                        style={"maxWidth": "800px", "margin": "20px auto"}
+                    ),
+                    dbc.Alert(
+                        [
+                            html.I(className="fas fa-info-circle me-2"),
+                            "Try switching to a different model or API key.",
+                        ],
+                        color="info",
+                        dismissable=True,
+                        style={"maxWidth": "800px", "margin": "20px auto"}
+                    )
+                ]), False, json_data
 
             set_progress(
                 html.Div(
-                    "3/5 Creating visualizations...", 
+                    "3/5 Creating visualizations...",
                     style={"color": COLORS["info"]}
                 )
             )
+
+            # Create dashboard builder and generate figures
             dashboard_builder = DashboardBuilder(df, COLORS)
             figures = dashboard_builder.create_all_figures(viz_specs)
 
             if include_text and analysis:
                 set_progress(
                     html.Div(
-                        "4/5 Generating insights summary... (Rate limiting in effect)",
+                        "4/5 Generating insights summary...",
                         style={"color": COLORS["info"]}
                     )
                 )
@@ -1209,200 +1247,188 @@ def analyze_data(
             else:
                 summary = None
 
-        # Initialize the benchmark system
-        from ai_dashboard_builder.benchmarking.dashboard_benchmark import DashboardBenchmark
-        benchmark = DashboardBenchmark(df)
-
-        # Create the visualization components (without sorting)
-        components = [
-            dbc.Card(
-                [
-                    dbc.CardHeader(html.H3("Dashboard", className="mb-0")),
-                    dbc.CardBody(
-                        [
-                            dbc.Row(
-                                [
-                                    dbc.Col(
-                                        [
-                                            dbc.Card(
-                                                [
-                                                    dbc.CardHeader(
-                                                        [
-                                                            dbc.Row(
-                                                                [
-                                                                    dbc.Col(
-                                                                        html.H5(
-                                                                            viz_specs[viz_id]["title"],
-                                                                            className="mb-0",
-                                                                        ),
-                                                                        className="pe-4",
-                                                                    ),
-                                                                    dbc.Col(
-                                                                        dbc.Button(
-                                                                            html.I(className="fa fa-expand"),
-                                                                            id={
-                                                                                "type": "maximize-btn",
-                                                                                "index": i,
-                                                                            },
-                                                                            color="link",
-                                                                            size="sm",
-                                                                            style={
-                                                                                "color": COLORS["text_secondary"],
-                                                                                "border": "none",
-                                                                                "backgroundColor": "transparent",
-                                                                                "padding": "4px 8px",
-                                                                            },
-                                                                        ),
-                                                                        width="auto",
-                                                                        className="ps-2",
-                                                                    ),
-                                                                ],
-                                                                className="align-items-center g-0",
-                                                            )
-                                                        ]
-                                                    ),
-                                                    dbc.CardBody(
-                                                        [
-                                                            html.Div(
-                                                                [
-                                                                    html.Div(
-                                                                        [
-                                                                            dcc.Graph(
-                                                                                id={
-                                                                                    "type": "viz",
-                                                                                    "index": i,
-                                                                                },
-                                                                                figure=fig,
-                                                                                config={
-                                                                                    "displayModeBar": False
-                                                                                },
-                                                                            ),
-                                                                            # Add relationship info from viz_specs
-                                                                            html.Div(
-                                                                                [
-                                                                                    html.Small(
-                                                                                        viz_specs[viz_id].get('relationship_text', ''),
-                                                                                        style={
-                                                                                            "color": COLORS["primary"] if viz_specs[viz_id].get('relationship_significance', False) else COLORS["text_secondary"],
-                                                                                            "fontStyle": "italic",
-                                                                                            "display": "block",
-                                                                                            "marginTop": "8px",
-                                                                                            "padding": "8px",
-                                                                                            "backgroundColor": f"{COLORS['background']}",
-                                                                                            "borderRadius": "4px",
-                                                                                            "border": f"1px solid {COLORS['divider']}"
-                                                                                        } if viz_specs[viz_id].get('relationship_text') else {"display": "none"}
-                                                                                    )
-                                                                                ]
-                                                                            ),
-                                                                        ],
-                                                                        id={
-                                                                            "type": "chart-content",
-                                                                            "index": i,
-                                                                        },
-                                                                        className="chart-container",
-                                                                    ),
-                                                                    html.Div(
-                                                                        [
-                                                                            html.Pre(
-                                                                                code,
-                                                                                style={
-                                                                                    "backgroundColor": COLORS[
-                                                                                        "background"
-                                                                                    ],
-                                                                                    "padding": "1rem",
-                                                                                    "borderRadius": "5px",
-                                                                                    "whiteSpace": "pre-wrap",
-                                                                                    "fontSize": "0.8rem",
-                                                                                },
-                                                                            ),
-                                                                            dbc.Button(
-                                                                                "Copy Code",
-                                                                                id={
-                                                                                    "type": "copy-btn",
-                                                                                    "index": i,
-                                                                                },
-                                                                                color="primary",
-                                                                                size="sm",
-                                                                                className="mt-2",
-                                                                            ),
-                                                                        ],
-                                                                        id={
-                                                                            "type": "code-content",
-                                                                            "index": i,
-                                                                        },
-                                                                        style={
-                                                                            "display": "none"
-                                                                        },
-                                                                    ),
-                                                                ]
-                                                            )
-                                                        ]
-                                                    ),
-                                                ],
-                                                className="mb-4",
-                                            )
-                                        ],
-                                        xs=12,
-                                        md=6,
-                                    )
-                                    for i, (viz_id, (fig, code)) in enumerate(figures.items())
-                                ]
-                            )
-                        ]
-                    ),
-                ],
-                className="mb-4",
-            )
-        ]
-
-        if include_text and analysis and summary:
-            components.extend([
+            # Create visualization components
+            components = [
                 dbc.Card(
                     [
-                        dbc.CardHeader(html.H3("Key Insights", className="mb-0")),
+                        dbc.CardHeader(html.H3("Dashboard", className="mb-0")),
                         dbc.CardBody(
-                            dcc.Markdown(
-                                summary,
-                                style={
-                                    "backgroundColor": COLORS["background"],
-                                    "padding": "1rem",
-                                    "borderRadius": "5px",
-                                },
-                            )
+                            [
+                                dbc.Row(
+                                    [
+                                        dbc.Col(
+                                            [
+                                                dbc.Card(
+                                                    [
+                                                        dbc.CardHeader(
+                                                            [
+                                                                dbc.Row(
+                                                                    [
+                                                                        dbc.Col(
+                                                                            html.H5(
+                                                                                viz_specs[viz_id]["title"],
+                                                                                className="mb-0",
+                                                                            ),
+                                                                            className="pe-4",
+                                                                        ),
+                                                                        dbc.Col(
+                                                                            dbc.Button(
+                                                                                html.I(className="fa fa-expand"),
+                                                                                id={
+                                                                                    "type": "maximize-btn",
+                                                                                    "index": i,
+                                                                                },
+                                                                                color="link",
+                                                                                size="sm",
+                                                                                style={
+                                                                                    "color": COLORS["text_secondary"],
+                                                                                    "border": "none",
+                                                                                    "backgroundColor": "transparent",
+                                                                                    "padding": "4px 8px",
+                                                                                },
+                                                                            ),
+                                                                            width="auto",
+                                                                            className="ps-2",
+                                                                        ),
+                                                                    ],
+                                                                    className="align-items-center g-0",
+                                                                )
+                                                            ]
+                                                        ),
+                                                        dbc.CardBody(
+                                                            [
+                                                                html.Div(
+                                                                    [
+                                                                        html.Div(
+                                                                            [
+                                                                                dcc.Graph(
+                                                                                    id={
+                                                                                        "type": "viz",
+                                                                                        "index": i,
+                                                                                    },
+                                                                                    figure=fig,
+                                                                                    config={
+                                                                                        "displayModeBar": False
+                                                                                    },
+                                                                                ),
+                                                                                html.Div(
+                                                                                    [
+                                                                                        html.Small(
+                                                                                            viz_specs[viz_id].get('relationship_text', ''),
+                                                                                            style={
+                                                                                                "color": COLORS["primary"] if viz_specs[viz_id].get('relationship_significance', False) else COLORS["text_secondary"],
+                                                                                                "fontStyle": "italic",
+                                                                                                "display": "block",
+                                                                                                "marginTop": "8px",
+                                                                                                "padding": "8px",
+                                                                                                "backgroundColor": f"{COLORS['background']}",
+                                                                                                "borderRadius": "4px",
+                                                                                                "border": f"1px solid {COLORS['divider']}"
+                                                                                            } if viz_specs[viz_id].get('relationship_text') else {"display": "none"}
+                                                                                        )
+                                                                                    ]
+                                                                                ),
+                                                                            ],
+                                                                            id={
+                                                                                "type": "chart-content",
+                                                                                "index": i,
+                                                                            },
+                                                                            className="chart-container",
+                                                                        ),
+                                                                    ]
+                                                                )
+                                                            ]
+                                                        ),
+                                                    ],
+                                                    className="mb-4",
+                                                )
+                                            ],
+                                            xs=12,
+                                            md=6,
+                                        )
+                                        for i, (viz_id, (fig, code)) in enumerate(figures.items())
+                                    ]
+                                )
+                            ]
                         ),
                     ],
                     className="mb-4",
-                ),
-                dbc.Card(
-                    [
-                        dbc.CardHeader(html.H3("Dataset Analysis", className="mb-0")),
-                        dbc.CardBody(
-                            dcc.Markdown(
-                                analysis,
-                                style={
-                                    "backgroundColor": COLORS["background"],
-                                    "padding": "1rem",
-                                    "borderRadius": "5px",
-                                },
-                            )
-                        ),
-                    ]
-                ),
-            ])
+                )
+            ]
 
-        return html.Div(components), True, json.dumps(data_store)
+            if include_text and analysis and summary:
+                components.extend([
+                    dbc.Card(
+                        [
+                            dbc.CardHeader(html.H3("Key Insights", className="mb-0")),
+                            dbc.CardBody(
+                                dcc.Markdown(
+                                    summary,
+                                    style={
+                                        "backgroundColor": COLORS["background"],
+                                        "padding": "1rem",
+                                        "borderRadius": "5px",
+                                    },
+                                )
+                            ),
+                        ],
+                        className="mb-4",
+                    ),
+                    dbc.Card(
+                        [
+                            dbc.CardHeader(html.H3("Dataset Analysis", className="mb-0")),
+                            dbc.CardBody(
+                                dcc.Markdown(
+                                    analysis,
+                                    style={
+                                        "backgroundColor": COLORS["background"],
+                                        "padding": "1rem",
+                                        "borderRadius": "5px",
+                                    },
+                                )
+                            ),
+                        ]
+                    ),
+                ])
+
+            # Always return a tuple with all three elements
+            return html.Div(components), True, json_data
+
+        except Exception as e:
+            error_msg = str(e)
+            if "quota" in error_msg.lower():
+                error_msg = "⚠️ API Quota Exceeded: Your API key has exceeded its quota. Please check your billing details or try a different API key."
+            elif "rate limit" in error_msg.lower():
+                error_msg = "⚠️ Rate Limit: Too many requests. Please try again in a few moments."
+            
+            return html.Div([
+                dbc.Alert(
+                    error_msg,
+                    color="danger",
+                    dismissable=True,
+                    style={"maxWidth": "800px", "margin": "20px auto"}
+                ),
+                dbc.Alert(
+                    [
+                        html.I(className="fas fa-info-circle me-2"),
+                        "Try switching to a different model or API key.",
+                    ],
+                    color="info",
+                    dismissable=True,
+                    style={"maxWidth": "800px", "margin": "20px auto"}
+                )
+            ]), False, json_data
 
     except Exception as e:
         logger.error(f"Analysis error: {str(e)}")
-        return (
-            html.Div(
+        return html.Div([
+            dbc.Alert(
                 f"Error during analysis: {str(e)}",
-                style={"color": COLORS["error"], "padding": "1rem"},
-            ),
-            False,
-            json_data,
-        )
+                color="danger",
+                dismissable=True,
+                style={"maxWidth": "800px", "margin": "20px auto"}
+            )
+        ]), False, json_data
 
 
 # Tab Switching
