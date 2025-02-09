@@ -46,6 +46,10 @@ from dash.long_callback import DiskcacheLongCallbackManager
 from ai_dashboard_builder.dashboard_builder import DashboardBuilder
 from ai_dashboard_builder.llm.llm_pipeline import LLMPipeline
 
+# Add this near the top with other imports
+import warnings
+from contextlib import contextmanager
+
 # --- 2. CONSTANTS ---
 # Base directories
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # /app/src
@@ -71,9 +75,14 @@ MAX_PREVIEW_COLS = 100
 
 # --- 3. CONFIGURATION ---
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)  # Set default level to WARNING
 logger = logging.getLogger("Dashboard")
+logger.setLevel(logging.INFO)  # Keep Dashboard logger at INFO
+
+# Reduce noise from other loggers
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
+logging.getLogger("dash").setLevel(logging.WARNING)
+logging.getLogger("ai_dashboard_builder.benchmarking.dashboard_benchmark").setLevel(logging.WARNING)
 
 # Add environment variable logging for debugging
 logger.info("Environment variables loaded:")
@@ -195,11 +204,12 @@ def apply_filters(df: pd.DataFrame, filter_state: Dict) -> pd.DataFrame:
         logger.info(f"Applying temporal filter: {temporal_filter}")
         for col in df.columns:
             try:
-                filtered_df[col] = pd.to_datetime(filtered_df[col])
-                filtered_df = filtered_df[
-                    (filtered_df[col] >= temporal_filter["start_date"])
-                    & (filtered_df[col] <= temporal_filter["end_date"])
-                ]
+                with suppress_small_sample_warnings():
+                    filtered_df[col] = pd.to_datetime(filtered_df[col])
+                    filtered_df = filtered_df[
+                        (filtered_df[col] >= temporal_filter["start_date"])
+                        & (filtered_df[col] <= temporal_filter["end_date"])
+                    ]
                 logger.info(f"Applied temporal filter on column {col}. Rows after filter: {len(filtered_df)}")
                 break
             except Exception as e:
@@ -217,6 +227,28 @@ def apply_filters(df: pd.DataFrame, filter_state: Dict) -> pd.DataFrame:
     final_len = len(filtered_df)
     logger.info(f"Final filtered dataframe length: {final_len} (reduced by {original_len - final_len} rows)")
     return filtered_df
+
+
+# Add this to the utility functions section
+@contextmanager
+def suppress_small_sample_warnings():
+    """Context manager to suppress small sample size warnings and other common warnings."""
+    with warnings.catch_warnings():
+        # Suppress scipy stats warnings
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
+        warnings.filterwarnings("ignore", message="One or more sample arguments is too small")
+        warnings.filterwarnings("ignore", message="all input arrays have length 1")
+        
+        # Suppress pandas datetime parsing warnings
+        warnings.filterwarnings("ignore", message="Could not infer format")
+        warnings.filterwarnings("ignore", message="Failed to parse with all parsers")
+        
+        # Suppress other common warnings
+        warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        warnings.filterwarnings("ignore", category=UserWarning)
+        
+        yield
 
 
 # --- 6. LAYOUT ---
@@ -414,6 +446,13 @@ app.layout = html.Div(
                                                     className="w-100 mt-2",
                                                     disabled=True,
                                                 ),
+                                                dbc.Button(
+                                                    "Full Benchmark",
+                                                    id="benchmark-button",
+                                                    color="secondary",
+                                                    className="w-100 mt-2",
+                                                    disabled=True,
+                                                ),
                                                 dcc.Dropdown(
                                                     id="kpi-selector",
                                                     multi=True,
@@ -551,6 +590,38 @@ app.layout = html.Div(
             size="xl",
             is_open=False,
         ),
+        dbc.Modal(
+            [
+                dbc.ModalHeader(dbc.ModalTitle("Full Model Benchmark")),
+                dbc.ModalBody([
+                    html.P([
+                        html.I(className="fas fa-exclamation-triangle me-2"),
+                        "This operation will test all available models and may take a considerable amount of time.",
+                    ]),
+                    html.P("Each model will be tested multiple times to ensure reliable results."),
+                    dbc.Form([
+                        dbc.Label("Number of passes per model:", className="mb-2"),
+                        dbc.Input(
+                            type="number",
+                            id="benchmark-passes-input",
+                            value=3,
+                            min=1,
+                            max=10,
+                            step=1
+                        ),
+                    ]),
+                    html.Div(id="benchmark-progress", className="mt-3"),
+                ]),
+                dbc.ModalFooter([
+                    dbc.Button("Cancel", id="cancel-benchmark", className="me-2"),
+                    dbc.Button("Start Benchmark", id="start-benchmark", color="primary"),
+                ]),
+            ],
+            id="benchmark-modal",
+            is_open=False,
+        ),
+        dcc.Store(id="benchmark-results", storage_type="memory"),
+        html.Div(id="benchmark-results-page", style={"display": "none"}),
     ],
     style={"backgroundColor": COLORS["background"], "minHeight": "100vh"},
 )
@@ -1932,3 +2003,343 @@ maximize_btn_style = {
     "backgroundColor": "transparent",
     ":hover": {"backgroundColor": "#f8f9fa"},
 }
+
+@app.callback(
+    Output("benchmark-button", "disabled"),
+    [Input("data-store", "data")],
+)
+def toggle_benchmark_button(json_data: str) -> bool:
+    """Enable/disable benchmark button based on data availability."""
+    return not bool(json_data)
+
+@app.callback(
+    Output("benchmark-modal", "is_open"),
+    [
+        Input("benchmark-button", "n_clicks"),
+        Input("cancel-benchmark", "n_clicks"),
+        Input("start-benchmark", "n_clicks"),
+    ],
+    [State("benchmark-modal", "is_open")],
+)
+def toggle_benchmark_modal(benchmark_clicks, cancel_clicks, start_clicks, is_open):
+    """Toggle the benchmark configuration modal."""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return is_open
+    trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    if trigger_id == "benchmark-button":
+        return True
+    elif trigger_id in ["cancel-benchmark", "start-benchmark"]:
+        return False
+    return is_open
+
+@app.long_callback(
+    [
+        Output("benchmark-results", "data"),
+        Output("results-container", "style"),
+        Output("benchmark-results-page", "style"),
+        Output("benchmark-results-page", "children"),
+    ],
+    [Input("start-benchmark", "n_clicks")],
+    [
+        State("data-store", "data"),
+        State("benchmark-passes-input", "value"),
+    ],
+    prevent_initial_call=True,
+    running=[
+        (Output("start-benchmark", "disabled"), True, False),
+        (Output("cancel-benchmark", "disabled"), True, False),
+        (Output("benchmark-button", "disabled"), True, False),
+    ],
+    progress=[Output("benchmark-progress", "children")],
+)
+def run_full_benchmark(set_progress, n_clicks, json_data, passes):
+    """Run benchmark on all available models."""
+    if not n_clicks or not json_data:
+        raise PreventUpdate
+
+    try:
+        # Add timeout warning
+        set_progress([
+            html.Div([
+                html.P(
+                    "Note: This benchmark may take several minutes to complete. "
+                    "Please do not close the browser window.",
+                    className="text-muted",
+                ),
+            ])
+        ])
+        
+        with suppress_small_sample_warnings():
+            data_store = json.loads(json_data)
+            df = pd.read_json(io.StringIO(data_store["full_data"]), orient="split")
+        
+        # Check minimum data requirements
+        if len(df) < 10:  # Arbitrary minimum, adjust as needed
+            return (
+                None,
+                {"display": "block"},
+                {"display": "none"},
+                html.Div([
+                    dbc.Alert(
+                        "Dataset is too small for meaningful benchmark results. "
+                        "Please use a dataset with at least 10 rows.",
+                        color="warning",
+                        dismissable=True,
+                    )
+                ])
+            )
+            
+        # Add warning for small datasets
+        if len(df) < 100:
+            logger.warning(
+                f"Small dataset detected ({len(df)} rows). "
+                "Benchmark results may not be statistically significant."
+            )
+        
+        # Define available models (external only)
+        models = [
+            {"name": "GPT-4o-mini", "id": "gpt-4o-mini", "provider": "external"},
+            {"name": "GPT-4o", "id": "gpt-4o", "provider": "external"},
+            {"name": "o1-mini", "id": "o1-mini", "provider": "external"},
+            {"name": "o1-preview", "id": "o1-preview", "provider": "external"},
+            {"name": "GPT-3.5-turbo", "id": "gpt-3.5-turbo", "provider": "external"},
+            {"name": "Groq Mixtral", "id": "mixtral-8x7b-32768", "provider": "external"},
+            {"name": "Groq Llama 3.1", "id": "llama-3.1-8b-instant", "provider": "external"},
+            {"name": "Groq Llama 3.3", "id": "llama-3.3-70b-specdec", "provider": "external"},
+            {"name": "Groq Gemma2", "id": "gemma2-9b-it", "provider": "external"},
+        ]
+
+        # Filter models based on available API keys
+        available_models = []
+        for model in models:
+            model_id = model["id"].lower()
+            if any(name in model_id for name in ["gpt", "o1"]) and os.getenv("OPENAI_API_KEY"):
+                available_models.append(model)
+            elif "claude" in model_id and os.getenv("ANTHROPIC_API_KEY"):
+                available_models.append(model)
+            elif any(name in model_id for name in ["mixtral", "llama", "gemma"]) and os.getenv("GROQ_API_KEY"):
+                available_models.append(model)
+
+        if not available_models:
+            return (
+                None,
+                {"display": "block"},
+                {"display": "none"},
+                html.Div([
+                    dbc.Alert(
+                        "No models available. Please check your API keys.",
+                        color="danger",
+                        dismissable=True,
+                    )
+                ])
+            )
+
+        total_steps = len(available_models) * passes
+        results = []  # Initialize results list
+        
+        for i, model in enumerate(available_models):
+            model_results = []
+            logger.info(f"Starting benchmark for {model['name']}")
+            
+            for pass_num in range(passes):
+                current_step = i * passes + pass_num + 1
+                progress_pct = (current_step / total_steps) * 100
+                
+                set_progress([
+                    dbc.Progress([
+                        dbc.Progress(
+                            value=progress_pct,
+                            color="success",
+                            bar=True,
+                            striped=True,
+                            animated=True,
+                        ),
+                    ], style={"height": "20px"}),
+                    html.P(
+                        f"Testing {model['name']} (Pass {pass_num + 1}/{passes})",
+                        className="text-center mt-2",
+                    ),
+                    html.P(
+                        f"Progress: {current_step}/{total_steps} steps ({progress_pct:.1f}%)",
+                        className="text-center",
+                    ),
+                ])
+
+                try:
+                    # Initialize pipeline for the model
+                    pipeline = LLMPipeline(
+                        model_name=model["id"],
+                        use_local=False  # Always use external APIs
+                    )
+                    
+                    # Get visualization suggestions
+                    viz_specs = pipeline.suggest_visualizations(df)
+                    
+                    # Skip if we got an error string
+                    if isinstance(viz_specs, str) and viz_specs.startswith("Error:"):
+                        logger.error(f"Error with {model['name']}: {viz_specs}")
+                        continue
+                    
+                    # Initialize benchmark system
+                    from ai_dashboard_builder.benchmarking.dashboard_benchmark import DashboardBenchmark
+                    
+                    # Use the context manager to suppress warnings
+                    with suppress_small_sample_warnings():
+                        benchmark = DashboardBenchmark(df)
+                        
+                        # Prepare specs for benchmarking
+                        benchmark_specs = []
+                        for spec in viz_specs.values():
+                            benchmark_spec = spec.copy()
+                            if isinstance(benchmark_spec.get('x'), list):
+                                benchmark_spec['x'] = benchmark_spec['x'][0]
+                            if isinstance(benchmark_spec.get('y'), list):
+                                benchmark_spec['y'] = benchmark_spec['y'][0]
+                            benchmark_specs.append(benchmark_spec)
+                        
+                        # Get metrics
+                        metrics = benchmark.evaluate_dashboard(benchmark_specs)
+                    
+                    # Log only the overall score for this pass
+                    logger.info(f"{model['name']} Pass {pass_num + 1} - Overall Score: {metrics.overall_score():.3f}")
+                    
+                    model_results.append({
+                        "overall_score": metrics.overall_score(),
+                        "validity": metrics.validity,
+                        "relevance": metrics.relevance,
+                        "usefulness": metrics.usefulness,
+                        "diversity": metrics.diversity,
+                        "redundancy": metrics.redundancy,
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error benchmarking {model['name']}: {str(e)}")
+                    continue
+            
+            # Calculate and log average scores for the model
+            if model_results:
+                avg_results = {
+                    key: np.mean([r[key] for r in model_results])
+                    for key in model_results[0].keys()
+                }
+                avg_results["model"] = model["name"]
+                avg_results["passes"] = len(model_results)
+                results.append(avg_results)
+                
+                logger.info(f"=== {model['name']} Final Scores (Avg of {len(model_results)} passes) ===")
+                logger.info(f"Overall Score: {avg_results['overall_score']:.3f}")
+                logger.info(f"Validity: {avg_results['validity']:.3f}")
+                logger.info(f"Relevance: {avg_results['relevance']:.3f}")
+                logger.info(f"Usefulness: {avg_results['usefulness']:.3f}")
+                logger.info(f"Diversity: {avg_results['diversity']:.3f}")
+                logger.info(f"Redundancy: {avg_results['redundancy']:.3f}")
+                logger.info("=" * 50)
+
+        # Rest of the visualization code remains the same...
+
+        # If we get here with no results
+        if not results:
+            return (
+                None,
+                {"display": "block"},
+                {"display": "none"},
+                html.Div([
+                    dbc.Alert(
+                        "No benchmark results were generated. Please try again.",
+                        color="warning",
+                        dismissable=True,
+                    )
+                ])
+            )
+
+        # Create results visualization
+        df_results = pd.DataFrame(results)
+        df_results = df_results.sort_values("overall_score", ascending=False)
+        
+        fig = go.Figure()
+        
+        # Add bars for each metric
+        metrics = ["overall_score", "validity", "relevance", "usefulness", "diversity", "redundancy"]
+        colors = ["#2ecc71", "#3498db", "#9b59b6", "#e74c3c", "#f1c40f", "#1abc9c"]
+        
+        for metric, color in zip(metrics, colors):
+            fig.add_trace(go.Bar(
+                name=metric.replace("_", " ").title(),
+                x=df_results["model"],
+                y=df_results[metric],
+                marker_color=color,
+            ))
+        
+        fig.update_layout(
+            title="Model Benchmark Results",
+            xaxis_title="Model",
+            yaxis_title="Score",
+            barmode="group",
+            template="plotly_white",
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+        )
+        
+        results_page = html.Div([
+            dbc.Button(
+                "← Back to Dashboard",
+                id="back-to-dashboard",
+                color="link",
+                className="mb-3",
+            ),
+            dbc.Card([
+                dbc.CardHeader(html.H3("Benchmark Results")),
+                dbc.CardBody([
+                    dcc.Graph(figure=fig),
+                    html.H5("Detailed Results", className="mt-4"),
+                    dbc.Table.from_dataframe(
+                        df_results.round(3),
+                        striped=True,
+                        bordered=True,
+                    ),
+                ]),
+            ]),
+        ])
+        
+        return (
+            df_results.to_json(date_format="iso", orient="split"),
+            {"display": "none"},
+            {"display": "block"},
+            results_page,
+        )
+
+    except Exception as e:
+        logger.error(f"Benchmark error: {str(e)}", exc_info=True)
+        return (
+            None,
+            {"display": "block"},
+            {"display": "none"},
+            html.Div([
+                dbc.Alert(
+                    f"Error during benchmark: {str(e)}",
+                    color="danger",
+                    dismissable=True,
+                )
+            ])
+        )
+
+@app.callback(
+    [
+        Output("results-container", "style", allow_duplicate=True),
+        Output("benchmark-results-page", "style", allow_duplicate=True),
+    ],
+    Input("back-to-dashboard", "n_clicks"),
+    prevent_initial_call=True,
+)
+def return_to_dashboard(n_clicks):
+    """Handle returning to the main dashboard from benchmark results."""
+    if n_clicks:
+        return {"display": "block"}, {"display": "none"}
+    raise PreventUpdate

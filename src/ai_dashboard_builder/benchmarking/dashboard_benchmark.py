@@ -56,16 +56,25 @@ class BenchmarkMetrics:
 
 class DashboardBenchmark:
     def __init__(self, df: pd.DataFrame, output_dir: str = None):
-        self.logger = logging.getLogger(__name__)
-        self.logger.info("Initializing DashboardBenchmark")
-        self.df = df
-        self.output_dir = output_dir or "dashboard_analysis"
-        self.relationship_cache = {}  # Initialize relationship cache
-        Path(self.output_dir).mkdir(parents=True, exist_ok=True)
-        self._analyze_data_types()
-        self.relationships = []  # Initialize relationships list
-        self._analyze_relationships()  # This will populate self.relationships
-        self._store_relationships()
+        # Suppress warnings at initialization
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            warnings.filterwarnings("ignore", category=UserWarning)
+            warnings.filterwarnings("ignore", message="One or more sample arguments is too small")
+            warnings.filterwarnings("ignore", message="all input arrays have length 1")
+            warnings.filterwarnings("ignore", message="Could not infer format")
+            
+            self.logger = logging.getLogger(__name__)
+            self.logger.setLevel(logging.WARNING)  # Reduce logging noise
+            self.logger.info("Initializing DashboardBenchmark")
+            self.df = df
+            self.output_dir = output_dir or "dashboard_analysis"
+            self.relationship_cache = {}
+            Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+            self._analyze_data_types()
+            self.relationships = []
+            self._analyze_relationships()
+            self._store_relationships()
 
     def _analyze_data_types(self):
         """Analyze and store column types for reference."""
@@ -92,55 +101,61 @@ class DashboardBenchmark:
     def _find_relationship(self, var1: str, var2: str) -> Dict:
         """Find the statistical relationship between two variables."""
         try:
-            # Get relationship info from cache if available
-            cache_key = f"{var1}_{var2}"
-            if cache_key in self.relationship_cache:
-                return {k: self._convert_to_native(v) for k, v in self.relationship_cache[cache_key].items()}
-
-            # If both variables are numeric
-            if var1 in self.numeric_cols and var2 in self.numeric_cols:
-                correlation, p_value = pearsonr(
-                    self.df[var1].fillna(0),
-                    self.df[var2].fillna(0)
-                )
-                relationship = {
-                    'type': 'numeric-numeric',
-                    'stat': self._convert_to_native(correlation),
-                    'p_value': self._convert_to_native(p_value)
-                }
-
-            # If both variables are categorical
-            elif var1 in self.categorical_cols and var2 in self.categorical_cols:
-                contingency = pd.crosstab(self.df[var1], self.df[var2])
-                chi2, p_value, _, _ = chi2_contingency(contingency)
-                relationship = {
-                    'type': 'cat-cat',
-                    'stat': self._convert_to_native(chi2),
-                    'p_value': self._convert_to_native(p_value)
-                }
-
-            # If one variable is numeric and the other is categorical
-            elif (var1 in self.numeric_cols and var2 in self.categorical_cols) or \
-                 (var2 in self.numeric_cols and var1 in self.categorical_cols):
-                num_var = var1 if var1 in self.numeric_cols else var2
-                cat_var = var2 if var1 in self.numeric_cols else var1
+            # Suppress warnings for statistical operations
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                warnings.filterwarnings("ignore", message="One or more sample arguments is too small")
+                warnings.filterwarnings("ignore", message="all input arrays have length 1")
                 
-                # Perform one-way ANOVA
-                categories = self.df[cat_var].unique()
-                samples = [self.df[self.df[cat_var] == cat][num_var].dropna() for cat in categories]
-                f_stat, p_value = stats.f_oneway(*samples) if len(samples) > 1 else (0, 1)
-                
-                relationship = {
-                    'type': 'numeric-cat',
-                    'stat': self._convert_to_native(f_stat),
-                    'p_value': self._convert_to_native(p_value)
-                }
-            else:
-                return None
+                # Get relationship info from cache if available
+                cache_key = f"{var1}_{var2}"
+                if cache_key in self.relationship_cache:
+                    return {k: self._convert_to_native(v) for k, v in self.relationship_cache[cache_key].items()}
 
-            # Cache the result
-            self.relationship_cache[cache_key] = relationship
-            return relationship
+                # If both variables are numeric
+                if var1 in self.numeric_cols and var2 in self.numeric_cols:
+                    correlation, p_value = pearsonr(
+                        self.df[var1].fillna(0),
+                        self.df[var2].fillna(0)
+                    )
+                    relationship = {
+                        'type': 'numeric-numeric',
+                        'stat': self._convert_to_native(correlation),
+                        'p_value': self._convert_to_native(p_value)
+                    }
+
+                # If both variables are categorical
+                elif var1 in self.categorical_cols and var2 in self.categorical_cols:
+                    contingency = pd.crosstab(self.df[var1], self.df[var2])
+                    chi2, p_value, _, _ = chi2_contingency(contingency)
+                    relationship = {
+                        'type': 'cat-cat',
+                        'stat': self._convert_to_native(chi2),
+                        'p_value': self._convert_to_native(p_value)
+                    }
+
+                # If one variable is numeric and the other is categorical
+                elif (var1 in self.numeric_cols and var2 in self.categorical_cols) or \
+                     (var2 in self.numeric_cols and var1 in self.categorical_cols):
+                    num_var = var1 if var1 in self.numeric_cols else var2
+                    cat_var = var2 if var1 in self.numeric_cols else var1
+                    
+                    # Perform one-way ANOVA
+                    categories = self.df[cat_var].unique()
+                    samples = [self.df[self.df[cat_var] == cat][num_var].dropna() for cat in categories]
+                    f_stat, p_value = stats.f_oneway(*samples) if len(samples) > 1 else (0, 1)
+                    
+                    relationship = {
+                        'type': 'numeric-cat',
+                        'stat': self._convert_to_native(f_stat),
+                        'p_value': self._convert_to_native(p_value)
+                    }
+                else:
+                    return None
+
+                # Cache the result
+                self.relationship_cache[cache_key] = relationship
+                return relationship
 
         except Exception as e:
             self.logger.error(f"Error finding relationship between {var1} and {var2}: {str(e)}")

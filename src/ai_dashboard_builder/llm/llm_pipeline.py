@@ -9,6 +9,7 @@ import re
 import time
 from datetime import datetime
 from typing import Any, Dict, Optional, List
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -18,12 +19,9 @@ from ..benchmarking import DashboardBenchmark
 from ai_dashboard_builder.llm import prompts
 from ai_dashboard_builder.utils.paths import get_root_path
 
-# Configure more detailed logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# Configure logging
 logger = logging.getLogger("LLMPipeline")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.WARNING)  # Set default to WARNING, we'll use INFO only for key metrics
 
 # Add a file handler for debugging
 debug_handler = logging.handlers.RotatingFileHandler(
@@ -351,24 +349,21 @@ class LLMPipeline:
             response_text = ""
 
             if any(name in self.model_name.lower() for name in ["gpt", "o1"]):
-                logger.info(f"Making OpenAI API request for model: {self.model_name}")
+                logger.info(f"Querying model: {self.model_name}")  # Keep model name logging
                 
                 headers = {
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                 }
                 
-                # Base data dictionary
                 data = {
                     "model": self.model_name,
                     "messages": [{"role": "user", "content": prompt}],
                 }
                 
-                # Add model-specific parameters
                 if any(name in self.model_name.lower() for name in ["o1-mini", "o1-preview"]):
-                    # Increase completion tokens and use max context window for o1 models
                     data["max_completion_tokens"] = 4000
-                    data["seed"] = 42  # Add deterministic output
+                    data["seed"] = 42
                 else:
                     data["max_tokens"] = 2000
                     data["temperature"] = 0.7
@@ -378,35 +373,31 @@ class LLMPipeline:
                         "https://api.openai.com/v1/chat/completions",
                         headers=headers,
                         json=data,
-                        timeout=60  # Increased timeout for longer responses
+                        timeout=60
                     )
                     
-                    logger.info(f"API Response Status: {response.status_code}")
-                    logger.info(f"Raw Response: {response.text[:500]}...")
-
                     if response.status_code == 429:
                         error_data = response.json().get("error", {})
                         if error_data.get("code") == "insufficient_quota":
-                            error_msg = "⚠️ API Quota Exceeded: Your OpenAI API key has exceeded its quota. Please check your billing details at platform.openai.com or try a different API key."
+                            error_msg = "⚠️ API Quota Exceeded: Your OpenAI API key has exceeded its quota. Please check your billing details or try a different API key."
                         else:
                             error_msg = "⚠️ Rate Limit: Too many requests. Please try again in a few moments."
                         logger.error(error_msg)
                         return f"Error: {error_msg}"
                     elif response.status_code != 200:
-                        error_msg = f"⚠️ OpenAI API Error ({response.status_code}): {response.text}"
+                        error_msg = f"⚠️ OpenAI API Error ({response.status_code})"
                         logger.error(error_msg)
                         return f"Error: {error_msg}"
                     
                     response_json = response.json()
                     response_text = response_json["choices"][0]["message"]["content"]
                     
-                    # Check for empty response
                     if not response_text.strip():
                         error_msg = "⚠️ Empty response from model. The input might be too long - try reducing the data size or using fewer columns."
                         logger.error(error_msg)
                         return f"Error: {error_msg}"
                     
-                    logger.info(f"Successfully extracted response text: {response_text[:100]}...")
+                    logger.debug(f"Response received from {self.model_name}")  # Downgrade to debug
                     
                 except requests.exceptions.Timeout:
                     error_msg = "⚠️ Request Timeout: The API request took too long to respond. Please try again."
@@ -419,7 +410,6 @@ class LLMPipeline:
                 except Exception as e:
                     error_msg = f"⚠️ OpenAI API Error: {str(e)}"
                     logger.error(error_msg)
-                    logger.error("Full error details:", exc_info=True)
                     return f"Error: {error_msg}"
 
             elif "claude" in self.model_name:
@@ -538,6 +528,7 @@ class LLMPipeline:
                 raise ValueError(f"Unsupported model: {self.model_name}")
 
             duration = time.time() - start_time
+            logger.debug(f"Query completed in {duration:.2f}s")  # Downgrade to debug
 
             # Save successful interaction
             self._save_interaction(
@@ -553,25 +544,8 @@ class LLMPipeline:
             return response_text
 
         except Exception as e:
-            duration = time.time() - start_time
             error_msg = str(e)
-            logger.error(
-                f"Error querying {self.model_name} API: {error_msg}", exc_info=True
-            )
-
-            # Save failed interaction
-            self._save_interaction(
-                prompt,
-                f"Error: {error_msg}",
-                {
-                    "status": "error",
-                    "error_type": "api_error",
-                    "error_message": error_msg,
-                    "duration_seconds": duration,
-                    "model": self.model_name,
-                },
-            )
-
+            logger.error(f"Error querying {self.model_name}: {error_msg}")
             return f"Error: {error_msg}"
 
     def _sort_dataframe_chronologically(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -698,66 +672,45 @@ class LLMPipeline:
     ) -> Dict:
         """Generate visualization specifications for the dataset."""
         try:
+            logger.debug("Starting visualization suggestions")
+            
             # Get visualization suggestions from LLM
             viz_specs = self._get_visualization_suggestions(df, kpis)
             
-            # If we got an error string instead of viz specs, return it directly
             if isinstance(viz_specs, str) and viz_specs.startswith("Error:"):
                 return viz_specs
 
-            # Save visualization specs
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            viz_specs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "llm_responses")
-            os.makedirs(viz_specs_dir, exist_ok=True)
-            
             # Initialize benchmark system for scoring
             from ai_dashboard_builder.benchmarking.dashboard_benchmark import DashboardBenchmark
-            benchmark = DashboardBenchmark(df)
             
-            # Convert list-type x and y values to strings for benchmarking
-            benchmark_specs = []
-            for spec in viz_specs.values():
-                benchmark_spec = spec.copy()
-                if isinstance(benchmark_spec.get('x'), list):
-                    benchmark_spec['x'] = benchmark_spec['x'][0]  # Use first column for validation
-                if isinstance(benchmark_spec.get('y'), list):
-                    benchmark_spec['y'] = benchmark_spec['y'][0]  # Use first column for validation
-                benchmark_specs.append(benchmark_spec)
+            # Use the warning suppression context manager
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                warnings.filterwarnings("ignore", message="One or more sample arguments is too small")
+                warnings.filterwarnings("ignore", message="all input arrays have length 1")
+                
+                benchmark = DashboardBenchmark(df)
+                
+                # Convert specs and get metrics
+                benchmark_specs = []
+                for spec in viz_specs.values():
+                    benchmark_spec = spec.copy()
+                    if isinstance(benchmark_spec.get('x'), list):
+                        benchmark_spec['x'] = benchmark_spec['x'][0]
+                    if isinstance(benchmark_spec.get('y'), list):
+                        benchmark_spec['y'] = benchmark_spec['y'][0]
+                    benchmark_specs.append(benchmark_spec)
+                
+                metrics = benchmark.evaluate_dashboard(benchmark_specs)
             
-            # Evaluate dashboard and get metrics
-            metrics = benchmark.evaluate_dashboard(benchmark_specs)
-            
-            # Get benchmark scores
-            benchmark_scores = {
-                "overall_score": metrics.overall_score(),
-                "validity": metrics.validity,
-                "relevance": metrics.relevance,
-                "usefulness": metrics.usefulness,
-                "diversity": metrics.diversity,
-                "redundancy": metrics.redundancy
-            }
-            
-            # Add metadata
-            output = {
-                "visualization_specs": viz_specs,
-                "timestamp": timestamp,
-                "model": self.model_name,
-                "provider": "local" if self.use_local else "external",
-                "dataset_filename": filename,
-                "benchmark_scores": benchmark_scores
-            }
-            
-            # Save to file
-            output_file = os.path.join(viz_specs_dir, f"viz_specs_{timestamp}.json")
-            with open(output_file, "w") as f:
-                json.dump(output, f, indent=2, cls=NumpyJSONEncoder)
+            # Log only the overall score
+            logger.info(f"Model {self.model_name} - Overall Score: {metrics.overall_score():.3f}")
             
             return viz_specs
 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Error in suggest_visualizations: {error_msg}")
-            logger.error("Full traceback:", exc_info=True)
+            logger.error(f"Error in visualization suggestion: {error_msg}")
             return f"Error: {error_msg}"
 
     def explain_pattern(self, df: pd.DataFrame, pattern_description: str) -> str:
