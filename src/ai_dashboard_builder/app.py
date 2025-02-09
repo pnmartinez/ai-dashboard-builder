@@ -356,7 +356,7 @@ app.layout = html.Div(
                                                                 "value": "deepseek-r1-distill-llama-70b",
                                                             },
                                                         ],
-                                                        value="gpt-4o-mini",
+                                                        value="llama-3.3-70b-specdec",
                                                         className="mb-2",
                                                     ),
                                                     id="model-selection-collapse",
