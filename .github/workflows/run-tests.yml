@@ -8,83 +8,126 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
+  lint:
+    name: Lint (ruff)
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: 'pip'
+
+      - name: Install ruff
+        run: pip install ruff>=0.3.0
+
+      - name: Run ruff check
+        run: ruff check src/
+
+      - name: Run ruff format check
+        run: ruff format --check src/
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    needs: lint
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10"]
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'pip'
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install pytest pytest-cov pytest-mock
-        pip install -e .
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-mock
+          pip install -e .
 
-    - name: Run tests with JUnit report
-      env:
-        OPENAI_API_KEY: dummy_key
-        ANTHROPIC_API_KEY: dummy_key
-        GROQ_API_KEY: dummy_key
-      run: |
-        pytest src/ai_dashboard_builder/tests/ -v --junitxml=results.xml
+      - name: Run tests with JUnit report
+        env:
+          OPENAI_API_KEY: dummy_key
+          ANTHROPIC_API_KEY: dummy_key
+          GROQ_API_KEY: dummy_key
+        run: |
+          pytest src/ai_dashboard_builder/tests/ -v --junitxml=results.xml
 
+      - name: Check test pass ratio (≥ 70 %)
+        run: |
+          python - <<'EOF'
+          import sys
+          import xml.etree.ElementTree as ET
 
-    - name: Check test pass ratio
-      run: |
-        RATIO=$(python -c "import xml.etree.ElementTree as ET; tree=ET.parse('results.xml'); root=tree.getroot(); suite=root.find('testsuite') if root.tag=='testsuites' else root; tests=int((suite.get('tests') or '0')); failures=int((suite.get('failures') or '0')); errors=int((suite.get('errors') or '0')); skips=int((suite.get('skipped') or '0')); passed=tests-failures-errors-skips; print((passed/tests*100) if tests else 0)")
-        echo "Pass ratio: $RATIO%"
-        CHECK=$(echo "$RATIO < 70" | bc -l)        
-        if (( CHECK )); then
-          echo "Test pass ratio ($RATIO%) is below threshold (70%)"
-          exit 1
-        fi
+          tree = ET.parse("results.xml")
+          root = tree.getroot()
+          suite = root.find("testsuite") if root.tag == "testsuites" else root
+          tests    = int(suite.get("tests",    "0"))
+          failures = int(suite.get("failures", "0"))
+          errors   = int(suite.get("errors",   "0"))
+          skips    = int(suite.get("skipped",  "0"))
+          passed   = tests - failures - errors - skips
+          ratio    = (passed / tests * 100) if tests else 0.0
 
+          print(f"Pass ratio: {ratio:.1f}%  ({passed}/{tests})")
+          if ratio < 70:
+              print(f"ERROR: pass ratio {ratio:.1f}% is below the 70% threshold")
+              sys.exit(1)
+          EOF
 
-    # - name: Comment PR with test results
-    #   if: github.event_name == 'pull_request'
-    #   uses: actions/github-script@v7
-    #   with:
-    #     script: |
-    #       const fs = require('fs');
-    #       const xml = fs.readFileSync('results.xml', 'utf8');
-    #       const matchTests = xml.match(/tests="(\d+)"/);
-    #       const matchFailures = xml.match(/failures="(\d+)"/);
-    #       const matchErrors = xml.match(/errors="(\d+)"/);
-    #       const matchSkips = xml.match(/skipped="(\d+)"/) || ["", "0"];
+      - name: Upload coverage report
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: .coverage
 
-    #       const tests = parseInt(matchTests[1], 10);
-    #       const failures = parseInt(matchFailures[1], 10);
-    #       const errors = parseInt(matchErrors[1], 10);
-    #       const skips = parseInt(matchSkips[1], 10);
-    #       const passed = tests - failures - errors - skips;
-    #       const ratio = tests > 0 ? (passed / tests) * 100 : 0;
+      - name: Comment PR with test results
+        if: github.event_name == 'pull_request' && matrix.python-version == '3.11'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const xml = fs.readFileSync('results.xml', 'utf8');
 
-    #       const comment = `## Test Results 🧪
+            const getAttr = (attr) => {
+              const m = xml.match(new RegExp(`${attr}="(\\d+)"`));
+              return m ? parseInt(m[1], 10) : 0;
+            };
 
-    #       - Python Version: ${{ matrix.python-version }}
-    #       - Tests Run: ${tests}
-    #       - Passed: ${passed}
-    #       - Failures: ${failures}
-    #       - Errors: ${errors}
-    #       - Skips: ${skips}
-    #       - Pass Ratio: ${ratio.toFixed(2)}%
-          
-    #       ${ratio < 70 ? '⚠️ Pass ratio is below 70% threshold!' : '✅ Pass ratio meets requirements'}
-    #       `;
+            const tests    = getAttr('tests');
+            const failures = getAttr('failures');
+            const errors   = getAttr('errors');
+            const skips    = getAttr('skipped');
+            const passed   = tests - failures - errors - skips;
+            const ratio    = tests > 0 ? (passed / tests) * 100 : 0;
 
-    #       github.rest.issues.createComment({
-    #         issue_number: context.issue.number,
-    #         owner: context.repo.owner,
-    #         repo: context.repo.name,
-    #         body: comment
-    #       });
+            const status = ratio >= 70 ? '✅ Pass ratio meets requirements' : '⚠️ Pass ratio is below 70% threshold!';
 
+            const comment = [
+              '## Test Results 🧪',
+              `- **Python**: ${{ matrix.python-version }}`,
+              `- **Tests run**: ${tests}`,
+              `- **Passed**: ${passed}`,
+              `- **Failures**: ${failures}`,
+              `- **Errors**: ${errors}`,
+              `- **Skipped**: ${skips}`,
+              `- **Pass ratio**: ${ratio.toFixed(1)}%`,
+              '',
+              status,
+            ].join('\n');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.name,
+              body: comment,
+            });

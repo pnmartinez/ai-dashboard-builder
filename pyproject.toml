@@ -3,23 +3,23 @@ name = "ai-dashboard-builder"
 version = "0.6.0"
 description = "Throw your data, let AI make a dashboard"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     { name = "pnmartinez", email = "pablonavaber@hotmail.com" },
 ]
 dependencies = [
-    "anthropic==0.18.1",
-    "dash-bootstrap-components==1.5.0",
-    "dash-dangerously-set-inner-html==0.0.2",
-    "dash[diskcache]==2.15.0",
-    "markdown2==2.4.12",
-    "numpy==1.26.4",
-    "openai==1.12.0",
-    "openpyxl==3.1.2",
-    "pandas==2.2.1",
-    "plotly==5.19.0",
-    "python-dotenv==1.0.0",
-    "requests==2.32.2",
+    "anthropic>=0.18.1",
+    "dash-bootstrap-components>=1.5.0",
+    "dash-dangerously-set-inner-html>=0.0.2",
+    "dash[diskcache]>=2.15.0",
+    "markdown2>=2.4.12",
+    "numpy>=1.26.4",
+    "openai>=1.12.0",
+    "openpyxl>=3.1.2",
+    "pandas>=2.2.1",
+    "plotly>=5.19.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.32.0",
     "scipy>=1.11.0",
 ]
 classifiers = [
@@ -28,14 +28,15 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Information Analysis",
     "Topic :: Scientific/Engineering :: Visualization",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-keywords = ["ai", "dashboard", "data", "visualization", "plotly", "dash", "openai"]
+keywords = ["ai", "dashboard", "data", "visualization", "plotly", "dash", "openai", "anthropic", "llm"]
 
 [project.urls]
 Homepage = "https://github.com/pnmartinez/ai-dashboard-builder/"
@@ -48,6 +49,14 @@ test = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.10.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "mypy>=1.8.0",
+    "ruff>=0.3.0",
+    "pre-commit>=3.6.0",
 ]
 
 [tool.ruff]
@@ -63,7 +72,15 @@ extend-ignore = ["E402"]
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[tool.pytest]
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
 testpaths = ["src/ai_dashboard_builder/tests"]
 python_files = "test_*.py"
 addopts = "-v --cov=ai_dashboard_builder"
@@ -75,6 +92,3 @@ omit = ["tests/*"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.poetry.dependencies]
-python = "^3.8"

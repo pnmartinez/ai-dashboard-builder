@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 logger = logging.getLogger("DashboardBuilder")
 
 
-def code_block_to_lines(code: str) -> str:
+def code_block_to_lines(code: str) -> list[str]:
     """Format a code block with consistent indentation and whitespace.
 
     Args:
@@ -87,14 +87,17 @@ class DashboardBuilder:
                 )
                 raise ValueError(f"Column '{y}' not found in dataframe")
 
-            # Handle size parameter for scatter plots
+            # Handle size parameter for scatter plots.
+            # px.scatter only accepts a column name (str) for `size`; raw numbers
+            # must be applied via update_traces(marker_size=…) instead.
+            numeric_marker_size = None
             if viz_type == "scatter" and "size" in params:
                 size_value = params["size"]
                 if isinstance(size_value, (int, float)):
-                    # If size is a number, use it directly
-                    size = size_value
+                    # Fixed marker size — applied after figure creation
+                    size = None
+                    numeric_marker_size = size_value
                 elif isinstance(size_value, str) and size_value not in self.df.columns:
-                    # If size is a string but not a column name, remove it
                     logger.warning(
                         f"Size column '{size_value}' not found, using default size"
                     )
@@ -231,6 +234,9 @@ class DashboardBuilder:
                     else None,
                 )
 
+                if numeric_marker_size is not None:
+                    fig.update_traces(marker_size=numeric_marker_size)
+
                 lines = f"""
                 # Create scatter plot
                 fig = px.scatter(
@@ -239,7 +245,7 @@ class DashboardBuilder:
                     y='{y}',
                     color='{color}' if '{color}' in df.columns else None,
                     title='{title}',
-                    size={size if isinstance(size, (int, float)) else f'{size}' if size else 'None'},
+                    size={f"'{size}'" if isinstance(size, str) else 'None'},
                     hover_data={params.get('hover_data')}
                 )
                 """
